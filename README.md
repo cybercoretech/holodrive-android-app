@@ -2,7 +2,7 @@
 
 A native Android client for [Holodrive](https://github.com/cybercore-tech/holodrive), with a photo gallery, device-token sign-in, and resumable background uploads from Android's share sheet.
 
-**Application ID:** `dev.cybercore.holodrive.photos` (debug: `.debug`). Android 11+, Kotlin / Jetpack Compose / Material 3. This is the first development build, not a published release.
+**Application ID:** `dev.cybercore.holodrive.photos` (debug: `.debug`). Android 11+, Kotlin / Jetpack Compose / Material 3. This is an early release build and is not published through an app store.
 
 ## Using the app
 
@@ -44,7 +44,16 @@ chmod 600 "$HOME/Vaults/android/holodrive-debug.keystore"
 ./gradlew assembleDebug test lint assembleRelease
 ```
 
-Android Studio's ordinary `debug` variant is the safe default. It builds the normal signed debug app at `app/build/outputs/apk/debug/app-debug.apk`. Choose `scratchDebug` only when running the isolated synthetic-photo server. `assembleRelease` produces **unsigned** optimized APKs for both variants; release signing and store publishing are not configured. The pinned stack matches CybercoreContinuity; dependency/target upgrade advisories remain visible in lint.
+Android Studio's ordinary `debug` variant is the safe default. It builds the normal signed debug app at `app/build/outputs/apk/debug/app-debug.apk`. Choose `scratchDebug` only when running the isolated synthetic-photo server. The optimized `serverRelease` variant uses the dedicated release key when the `HOLODRIVE_RELEASE_*` environment variables are set; otherwise it remains unsigned. Release key material and its private environment file stay in `~/Vaults/android/` and must never be committed. Build a signed release with:
+
+```sh
+set -a
+. "$HOME/Vaults/android/holodrive-photos-release.env"
+set +a
+./gradlew :app:assembleServerRelease
+```
+
+The signed APK is written under `app/build/outputs/apk/server/release/`. Keep the keystore backed up securely; future app updates must use this same key. The pinned stack matches CybercoreContinuity; dependency/target upgrade advisories remain visible in lint.
 
 ## Isolated emulator testing
 
@@ -65,8 +74,8 @@ The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopb
 
 ## Release preparation
 
-The user creates the GitHub repository and chooses visibility; no remote is created automatically. Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact once hosted.
+The private repository is `https://github.com/cybercore-tech/holodrive`. Android changes are kept on the `feat/photo-gallery` branch. Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
-Before public distribution: test the real phone over Tailscale, test a separately hosted HTTPS server, review target-SDK/store requirements and dependency updates, select production signing and publisher details, publish a privacy-policy URL/contact, choose the source license, and run hosted CI. No release claim is made until these are complete.
+Before public distribution: test the real phone over Tailscale, test a separately hosted HTTPS server, review target-SDK/store requirements and dependency updates, select publisher details, publish a privacy-policy URL/contact, choose the source license, and run hosted CI. No release claim is made until these are complete.
 
 JetBrains Mono Nerd font files are bundled under the included [OFL](docs/JetBrainsMono-OFL.txt). The cube is adapted from Holodrive's existing brand asset.

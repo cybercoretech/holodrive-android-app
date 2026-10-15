@@ -3,6 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+val releaseStoreFile = System.getenv("HOLODRIVE_RELEASE_STORE_FILE")
+val releaseStorePassword = System.getenv("HOLODRIVE_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = System.getenv("HOLODRIVE_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("HOLODRIVE_RELEASE_KEY_PASSWORD")
+val releaseSigningValues = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword)
+val releaseSigningConfigured = releaseSigningValues.all { !it.isNullOrBlank() }
+if (releaseSigningValues.any { !it.isNullOrBlank() } && !releaseSigningConfigured) {
+    throw GradleException("Release signing requires all HOLODRIVE_RELEASE_* environment variables.")
+}
 android {
     namespace = "dev.cybercore.holodrive.photos"
     compileSdk = 36
@@ -35,6 +44,15 @@ android {
         getByName("debug") {
             storeFile = file(System.getProperty("user.home") + "/Vaults/android/holodrive-debug.keystore")
         }
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                storeType = "PKCS12"
+            }
+        }
     }
     buildTypes {
         debug {
@@ -45,6 +63,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

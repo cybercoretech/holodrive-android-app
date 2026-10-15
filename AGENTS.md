@@ -19,8 +19,9 @@ identity in the original handoff below:
   resumable background uploads using the server's existing device-token and
   upload APIs. Broad file management and server administration remain out of
   scope for this milestone. The private repository is
-  `https://github.com/cybercore-tech/holodrive`; release signing is not yet
-  selected. The local branch is `feat/photo-gallery`.
+  `https://github.com/cybercore-tech/holodrive`; release signing uses the
+  dedicated key in `~/Vaults/android/holodrive-photos-release.jks`. The local
+  branch is `feat/photo-gallery`.
 - In Android Studio, the ordinary `debug` build uses real-server networking and
   screenshot protection. Use `scratchDebug` for isolated synthetic-photo tests.
 - The later screenshot about character bios belonged to another task; ignore it.
