@@ -1,0 +1,31 @@
+name: Android
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Create ephemeral debug signing key
+        run: |
+          mkdir -p "$HOME/Vaults/android"
+          chmod 700 "$HOME/Vaults/android"
+          keytool -genkeypair -keystore "$HOME/Vaults/android/holodrive-debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+          chmod 600 "$HOME/Vaults/android/holodrive-debug.keystore"
+      - name: Build and check
+        run: ./gradlew assembleDebug test lint assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: holodrive-photos-debug
+          path: app/build/outputs/apk/debug/app-debug.apk

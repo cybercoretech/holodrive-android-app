@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.Holodrive" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowBackground">#07070D</item>
+        <item name="android:colorAccent">#00F0FF</item>
+    </style>
+</resources>
