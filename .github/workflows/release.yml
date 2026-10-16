@@ -72,7 +72,7 @@ jobs:
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/server/release/app-server-release.apk dist/holodrive-photos.apk
-          apksigner verify --verbose --print-certs dist/holodrive-photos.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs dist/holodrive-photos.apk
           (cd dist && sha256sum holodrive-photos.apk > holodrive-photos.apk.sha256)
           cat > dist/INSTALL.txt <<'EOF'
           Holodrive Photos for Android
