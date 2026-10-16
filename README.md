@@ -6,7 +6,9 @@ A native Android client for [Holodrive](https://github.com/cybercore-tech/holodr
 
 ## 📲 Install Holodrive Photos
 
-**[Download the latest signed APK](https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk)** · [Release notes and checksums](https://github.com/cybercore-tech/holodrive-android-app/releases/latest) · [Install with Obtainium](https://github.com/cybercore-tech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercore-tech.github.io/holodrive-android-app/)
+**[GitHub Releases](https://github.com/cybercore-tech/holodrive-android-app/releases)** · [Install with Obtainium](https://github.com/cybercore-tech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercore-tech.github.io/holodrive-android-app/)
+
+The first signed APK release is being prepared. After `v0.1.0` is published, the stable latest-release download URLs below will be active.
 
 ```sh
 curl -fL -o holodrive-photos.apk https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
