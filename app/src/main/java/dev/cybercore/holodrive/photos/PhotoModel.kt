@@ -34,6 +34,10 @@ data class PhotoState(
     val choosing: Boolean = false,
     val drives: List<Drive> = emptyList(),
     val entries: List<PhotoEntry> = emptyList(),
+    val filePath: String? = null,
+    val fileEntries: List<PhotoEntry> = emptyList(),
+    val fileBusy: Boolean = false,
+    val fileError: String? = null,
     val catalog: ThemeCatalog = ThemeCatalog("", emptyList()),
     val themeChoice: String? = null,
     val blockedUntil: Long = 0,
@@ -60,6 +64,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     val state = mutable.asStateFlow()
     private var generation = 0
     private var browseJob: Job? = null
+    private var filesJob: Job? = null
     private var activeDeviceToken: String? = null
     var api = createApi()
         private set
@@ -117,6 +122,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         if (normalized == mutable.value.server) return null
         generation++
         browseJob?.cancel()
+        filesJob?.cancel()
         api.close()
         imageLoader.shutdown()
         CredentialVault(getApplication()).clear()
@@ -297,7 +303,8 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     private fun lock(error: String?) {
         browseJob?.cancel()
         imageLoader.shutdown()
-        mutable.update { it.copy(signedIn = false, busy = false, saving = false, entries = emptyList(), drives = emptyList(), path = null, error = error, notice = null) }
+        filesJob?.cancel()
+        mutable.update { it.copy(signedIn = false, busy = false, saving = false, entries = emptyList(), fileEntries = emptyList(), drives = emptyList(), path = null, filePath = null, fileBusy = false, fileError = null, error = error, notice = null) }
         // Expiry already clears cookies in the interceptor. Explicit logout keeps
         // its cookie long enough to invalidate the server-side session.
         if (error != null) {
@@ -315,12 +322,30 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         mutable.update { it.copy(path = path, entries = emptyList(), busy = true, error = null) }
         browseJob = viewModelScope.launch {
             try {
-                val drives = if (path == null) current.roots() else mutable.value.drives
+                val drives = if (path == null || mutable.value.drives.isEmpty()) current.roots() else mutable.value.drives
                 val entries = if (path != null) current.list(path) else emptyList()
                 if (api === current && mutable.value.signedIn) mutable.update { it.copy(drives = drives, entries = entries, busy = false) }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (api === current) mutable.update { it.copy(busy = false, error = message(e)) }
+            }
+        }
+    }
+    fun browseFiles(path: String?) {
+        if (!mutable.value.signedIn) return
+        filesJob?.cancel()
+        val current = api
+        mutable.update { it.copy(filePath = path, fileEntries = emptyList(), fileBusy = true, fileError = null) }
+        filesJob = viewModelScope.launch {
+            try {
+                val drives = if (path == null || mutable.value.drives.isEmpty()) current.roots() else mutable.value.drives
+                val entries = if (path != null) current.list(path) else emptyList()
+                if (api === current && mutable.value.signedIn) mutable.update {
+                    it.copy(drives = drives, fileEntries = entries, fileBusy = false, fileError = null)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (api === current) mutable.update { it.copy(fileBusy = false, fileError = message(e)) }
             }
         }
     }

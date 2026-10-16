@@ -5,6 +5,7 @@ package dev.cybercore.holodrive.photos
 import android.content.Intent
 import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -55,14 +57,17 @@ fun PhotoApp(
     unlockPassword: (onPassword: (String) -> Unit) -> Unit,
 ) {
     var settings by rememberSaveable { mutableStateOf(false) }
+    var section by rememberSaveable { mutableStateOf("photos") }
     var themePicker by rememberSaveable { mutableStateOf(false) }
     var uploadsOpen by rememberSaveable { mutableStateOf(false) }
     var confirmTokenAccess by rememberSaveable { mutableStateOf(false) }
-    var viewing by rememberSaveable(state.path, state.signedIn) { mutableStateOf<String?>(null) }
+    var viewing by rememberSaveable(state.path, state.filePath, state.signedIn) { mutableStateOf<String?>(null) }
+    var viewerFromFiles by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable(state.path) { mutableStateOf("") }
     val photos = remember(state.entries, query) {
-        state.entries.filter { !it.folder && it.name.contains(query, ignoreCase = true) }.sortedByDescending { it.modified }
+        state.entries.filter { it.image && it.name.contains(query, ignoreCase = true) }.sortedByDescending { it.modified }
     }
+    val filePhotos = remember(state.fileEntries) { state.fileEntries.filter { it.image }.sortedByDescending { it.modified } }
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val requestTokenAccess = { confirmTokenAccess = true }
@@ -87,8 +92,11 @@ fun PhotoApp(
     }
     // Refresh the server palette when the app returns from the browser.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { model.refreshThemes() }
-    BackHandler(state.signedIn && viewing == null && (state.choosing || state.path != state.library)) {
+    BackHandler(state.signedIn && section == "photos" && viewing == null && (state.choosing || state.path != state.library)) {
         if (state.choosing && state.path == null) model.cancelFolder() else model.up()
+    }
+    BackHandler(state.signedIn && section == "files" && viewing == null && state.filePath != null) {
+        model.browseFiles(state.filePath?.let { if ('/' in it) it.substringBeforeLast('/') else null })
     }
     Box(Modifier.fillMaxSize()) {
         GridBackdrop()
@@ -109,9 +117,9 @@ fun PhotoApp(
                 )
             },
             bottomBar = {
-                if (state.signedIn && !state.choosing) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    NavigationBarItem(selected = !settings, onClick = { model.home() }, icon = { Icon(Icons.Outlined.PhotoLibrary, null) }, label = { Text("Photos") })
-                    NavigationBarItem(selected = false, onClick = model::chooseFolder, icon = { Icon(Icons.Outlined.FolderOpen, null) }, label = { Text("Folder") })
+                if (state.signedIn) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    NavigationBarItem(selected = section == "photos" && !settings, onClick = { section = "photos"; settings = false; model.home() }, icon = { Icon(Icons.Outlined.PhotoLibrary, null) }, label = { Text("Photos") })
+                    NavigationBarItem(selected = section == "files" && !settings, onClick = { section = "files"; settings = false; model.browseFiles(state.filePath) }, icon = { Icon(Icons.Outlined.FolderOpen, null) }, label = { Text("Files") })
                     NavigationBarItem(selected = settings, onClick = { settings = true }, icon = { Icon(Icons.Outlined.Settings, null) }, label = { Text("Settings") })
                 }
             },
@@ -134,15 +142,25 @@ fun PhotoApp(
                 web = ::openWeb,
                 modifier = Modifier.padding(padding),
             )
-            else Gallery(model, state, photos, query, { query = it }, { viewing = it.path }, Modifier.padding(padding))
+            else if (section == "files") FileBrowser(
+                model = model,
+                state = state,
+                openImage = { entry -> viewerFromFiles = true; viewing = entry.path },
+                modifier = Modifier.padding(padding),
+            ) else Gallery(model, state, photos, query, { query = it }, { viewerFromFiles = false; viewing = it.path }, Modifier.padding(padding))
         }
         }
         if (viewing != null && state.signedIn) {
-            val initial = photos.indexOfFirst { it.path == viewing }.coerceAtLeast(0)
-            if (photos.isNotEmpty()) PhotoViewer(model, state, photos, initial) { viewing = null }
+            val viewerPhotos = if (viewerFromFiles) filePhotos else photos
+            val initial = viewerPhotos.indexOfFirst { it.path == viewing }.coerceAtLeast(0)
+            if (viewerPhotos.isNotEmpty()) PhotoViewer(model, state, viewerPhotos, initial) { viewing = null; viewerFromFiles = false }
         }
     }
-    if (settings) SettingsSheet(model, state, { themePicker = true }, ::openWeb, requestTokenAccess) { settings = false }
+    if (settings) SettingsSheet(model, state, { themePicker = true }, ::openWeb, requestTokenAccess, {
+        section = "photos"
+        settings = false
+        model.chooseFolder()
+    }) { settings = false }
     if (themePicker) ThemePicker(model, state) { themePicker = false }
     if (state.sharing) AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("Preparing uploads") }, text = { Text(state.shareProgress ?: "Copying shared files…") })
     if (state.sharedFiles.isNotEmpty() && state.signedIn) ShareUploadDialog(model, state, onEnableUploads = requestTokenAccess, close = model::dismissShare)
@@ -162,7 +180,7 @@ private fun Brand(compact: Boolean = false) {
         Image(painterResource(R.drawable.holocube), null, Modifier.size(if (compact) 32.dp else 64.dp))
         Column {
             Text("HOLODRIVE", fontSize = if (compact) 17.sp else 25.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-            Text("P H O T O S", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Text("P H O T O S  ·  F I L E S", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -324,7 +342,95 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
 }
 
 @Composable
-private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, close: () -> Unit) {
+private fun FileBrowser(
+    model: PhotoModel,
+    state: PhotoState,
+    openImage: (PhotoEntry) -> Unit,
+    modifier: Modifier,
+) {
+    var query by rememberSaveable(state.filePath) { mutableStateOf("") }
+    var pendingDownload by remember { mutableStateOf<PhotoEntry?>(null) }
+    var details by remember { mutableStateOf<PhotoEntry?>(null) }
+    val saveDocument = rememberLauncherForActivityResult(SavePhotoDocument()) { uri ->
+        val entry = pendingDownload
+        if (uri != null && entry != null) model.savePhoto(entry, uri)
+        pendingDownload = null
+    }
+    val entries = remember(state.fileEntries, query) {
+        state.fileEntries.asSequence()
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .sortedWith(compareBy<PhotoEntry> { !it.folder }.thenBy { it.name.lowercase(Locale.ROOT) })
+            .toList()
+    }
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 24.dp)) {
+        item {
+            Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("YOUR FILES", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                    ActionIcon(Icons.Outlined.Refresh, "Refresh files") { model.browseFiles(state.filePath) }
+                }
+                Text(state.filePath?.substringAfterLast('/') ?: "All drives", style = MaterialTheme.typography.headlineMedium)
+                if (state.filePath != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Parent folder") {
+                            model.browseFiles(if ('/' in state.filePath) state.filePath.substringBeforeLast('/') else null)
+                        }
+                        Text(state.filePath, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    }
+                    OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), placeholder = { Text("Find a file or folder") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true)
+                }
+                Text(if (state.filePath == null) "Browse every connected Holodrive drive." else "${entries.size} items in this folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            }
+        }
+        if (state.fileBusy) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp)) }
+        state.fileError?.let { error -> item {
+            StatusCard(Icons.Outlined.CloudOff, "Files unavailable", error, "Try again") { model.browseFiles(state.filePath) }
+        } }
+        if (state.filePath == null && !state.fileBusy && state.fileError == null) {
+            items(state.drives, key = { "file-drive/${it.id}" }) { drive ->
+                ListItem(
+                    headlineContent = { Text(drive.name) },
+                    supportingContent = { Text(drive.id) },
+                    leadingContent = { Text(drive.icon, fontSize = 24.sp) },
+                    trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+                    modifier = Modifier.clip(RoundedCornerShape(14.dp)).clickable(enabled = drive.online) { model.browseFiles(drive.id) },
+                )
+            }
+        }
+        if (state.filePath != null && !state.fileBusy && state.fileError == null) {
+            if (entries.isEmpty()) item { Text(if (query.isBlank()) "This folder is empty." else "No files match that name.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 28.dp)) }
+            items(entries, key = { it.path }) { entry ->
+                val icon = when { entry.folder -> Icons.Outlined.FolderOpen; entry.image -> Icons.Outlined.Image; else -> Icons.AutoMirrored.Outlined.InsertDriveFile }
+                ListItem(
+                    headlineContent = { Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = { Text(if (entry.folder) "Folder" else "${entry.mime.ifBlank { "File" }} · ${android.text.format.Formatter.formatFileSize(LocalContext.current, entry.size)}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingContent = { Icon(icon, null, tint = if (entry.folder) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
+                    trailingContent = if (entry.folder) null else ({
+                        IconButton(onClick = { pendingDownload = entry; saveDocument.launch(entry) }) { Icon(Icons.Outlined.Download, "Save ${entry.name}") }
+                    }),
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable {
+                        when { entry.folder -> model.browseFiles(entry.path); entry.image -> openImage(entry); else -> details = entry }
+                    },
+                )
+            }
+        }
+    }
+    details?.let { entry ->
+        ModalBottomSheet(onDismissRequest = { details = null }) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(entry.name, style = MaterialTheme.typography.titleLarge)
+                Text(entry.path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${entry.mime.ifBlank { "File" }} · ${android.text.format.Formatter.formatFileSize(LocalContext.current, entry.size)}", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { pendingDownload = entry; details = null; saveDocument.launch(entry) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Download, null); Spacer(Modifier.width(8.dp)); Text("SAVE TO DEVICE")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, choosePhotoFolder: () -> Unit, close: () -> Unit) {
     var address by remember { mutableStateOf(state.server) }
     var error by remember { mutableStateOf<String?>(null) }
     ModalBottomSheet(onDismissRequest = close) {
@@ -348,7 +454,7 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
                 }
             }
             HorizontalDivider()
-            ListItem(headlineContent = { Text("Photo folder") }, supportingContent = { Text(state.library ?: "Choose after signing in") }, leadingContent = { Icon(Icons.Outlined.FolderOpen, null) }, modifier = Modifier.clickable(enabled = state.signedIn) { model.chooseFolder(); close() })
+            ListItem(headlineContent = { Text("Photo folder") }, supportingContent = { Text(state.library ?: "Choose after signing in") }, leadingContent = { Icon(Icons.Outlined.FolderOpen, null) }, modifier = Modifier.clickable(enabled = state.signedIn) { choosePhotoFolder() })
             ListItem(headlineContent = { Text("Appearance") }, supportingContent = { Text(when (state.themeChoice) {
                 null -> "Follow server"
                 "builtin-cybergrid" -> "CYBERGRID"
