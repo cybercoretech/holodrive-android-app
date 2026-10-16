@@ -96,4 +96,6 @@ The Android source repository is `https://github.com/cybercore-tech/holodrive-an
 
 Before a release is tagged, hosted CI must build and test the release variant and the release signing secrets must be configured in the repository. The app source is licensed under [Apache-2.0](LICENSE); bundled JetBrains Mono Nerd font files remain under their separate [OFL](docs/JetBrainsMono-OFL.txt).
 
+For signed CI releases, add these repository **Actions secrets** without placing their values in source control: `HOLODRIVE_RELEASE_KEYSTORE_BASE64` (base64 of the existing PKCS#12 release keystore), `HOLODRIVE_RELEASE_STORE_PASSWORD`, `HOLODRIVE_RELEASE_KEY_ALIAS`, and `HOLODRIVE_RELEASE_KEY_PASSWORD`. Push a `vMAJOR.MINOR.PATCH` tag after the workflow is merged; CI runs the server-variant unit tests and release lint, builds and verifies the signed APK, then attaches the APK, SHA-256 file, and install instructions to that GitHub Release. Android's version code is derived from the tag, so each newer release can update the installed app.
+
 JetBrains Mono Nerd font files are bundled under the included [OFL](docs/JetBrainsMono-OFL.txt). The cube is adapted from Holodrive's existing brand asset.
