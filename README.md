@@ -74,7 +74,7 @@ The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopb
 
 ## Release preparation
 
-The private repository is `https://github.com/cybercore-tech/holodrive`. Android changes are kept on the `feat/photo-gallery` branch. Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
+The Android source repository is `https://github.com/cybercore-tech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercore-tech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
 Before public distribution: test the real phone over Tailscale, test a separately hosted HTTPS server, review target-SDK/store requirements and dependency updates, select publisher details, publish a privacy-policy URL/contact, choose the source license, and run hosted CI. No release claim is made until these are complete.
 
