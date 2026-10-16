@@ -30,7 +30,7 @@ data class PhotoState(
     val error: String? = null,
     val notice: String? = null,
     val path: String? = null,
-    val library: String? = null,
+    val photoFolders: List<String> = emptyList(),
     val choosing: Boolean = false,
     val drives: List<Drive> = emptyList(),
     val entries: List<PhotoEntry> = emptyList(),
@@ -40,6 +40,9 @@ data class PhotoState(
     val fileError: String? = null,
     val catalog: ThemeCatalog = ThemeCatalog("", emptyList()),
     val themeChoice: String? = null,
+    val gridSize: String = "medium",
+    val sortOrder: String = "newest",
+    val defaultTab: String = "photos",
     val blockedUntil: Long = 0,
     val hasDeviceToken: Boolean = false,
     val creatingDeviceToken: Boolean = false,
@@ -54,10 +57,14 @@ data class ShareFile(val file: File, val name: String, val size: Long)
 
 class PhotoModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("preferences", 0)
+    private val initialPhotoFolders = loadPhotoFolders()
     private val mutable = MutableStateFlow(PhotoState(
         server = prefs.getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER,
-        library = prefs.getString("library", null),
+        photoFolders = initialPhotoFolders,
         themeChoice = prefs.getString("theme", null),
+        gridSize = prefs.getString("grid_size", "medium") ?: "medium",
+        sortOrder = prefs.getString("sort_order", "newest") ?: "newest",
+        defaultTab = prefs.getString("default_tab", "photos") ?: "photos",
         hasDeviceToken = DeviceTokenVault(application).hasToken(),
         uploadDirectory = prefs.getString("upload_directory", "shared/from-phone") ?: "shared/from-phone",
     ))
@@ -66,6 +73,24 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     private var browseJob: Job? = null
     private var filesJob: Job? = null
     private var activeDeviceToken: String? = null
+
+    private fun loadPhotoFolders(): List<String> {
+        prefs.getStringSet("photo_folders", null)?.let { saved ->
+            return saved.filter(String::isNotBlank).distinct().sorted()
+        }
+        val legacy = prefs.getString("library", null)?.takeIf(String::isNotBlank)
+        if (legacy != null) prefs.edit { putStringSet("photo_folders", setOf(legacy)) }
+        return listOfNotNull(legacy)
+    }
+
+    private fun savePhotoFolders(folders: List<String>) {
+        val clean = folders.map(String::trim).filter(String::isNotEmpty).distinct().sorted()
+        prefs.edit {
+            putStringSet("photo_folders", clean.toSet())
+            if (clean.isEmpty()) remove("library") else putString("library", clean.first())
+        }
+        mutable.update { it.copy(photoFolders = clean) }
+    }
     var api = createApi()
         private set
     var imageLoader = createImageLoader()
@@ -129,8 +154,13 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         tokenVault.clear()
         activeDeviceToken = null
         androidx.work.WorkManager.getInstance(getApplication<Application>()).cancelAllWorkByTag(UploadWorker.TAG)
-        prefs.edit { putString("server", normalized); remove("library"); remove("theme") }
-        mutable.value = PhotoState(server = normalized)
+        prefs.edit { putString("server", normalized); remove("library"); remove("photo_folders"); remove("theme"); remove("upload_directory") }
+        mutable.value = PhotoState(
+            server = normalized,
+            gridSize = prefs.getString("grid_size", "medium") ?: "medium",
+            sortOrder = prefs.getString("sort_order", "newest") ?: "newest",
+            defaultTab = prefs.getString("default_tab", "photos") ?: "photos",
+        )
         api = createApi()
         imageLoader = createImageLoader()
         refreshThemes()
@@ -147,8 +177,8 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 if (api !== current) return@launch
                 activeDeviceToken = null
                 onSuccess?.invoke()
-                mutable.update { it.copy(signedIn = true, busy = false, choosing = it.library == null, error = null) }
-                browse(mutable.value.library)
+                mutable.update { it.copy(signedIn = true, busy = false, choosing = it.photoFolders.isEmpty(), error = null) }
+                browse(null)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (api !== current) return@launch
@@ -169,8 +199,8 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 if (api !== current) return@launch
                 activeDeviceToken = token.trim()
                 if (remember) tokenVault.store(token.trim())
-                mutable.update { it.copy(signedIn = true, busy = false, choosing = it.library == null, hasDeviceToken = tokenVault.hasToken(), error = null) }
-                browse(mutable.value.library)
+                mutable.update { it.copy(signedIn = true, busy = false, choosing = it.photoFolders.isEmpty(), hasDeviceToken = tokenVault.hasToken(), error = null) }
+                browse(null)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (api !== current) return@launch
@@ -247,8 +277,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                         } catch (e: Exception) { file.delete(); throw e }
                     }
                 }
-                mutable.update { it.copy(sharedFiles = staged, sharing = false, shareProgress = null,
-                    uploadDirectory = mutable.value.path ?: mutable.value.uploadDirectory) }
+                mutable.update { it.copy(sharedFiles = staged, sharing = false, shareProgress = null) }
             } catch (e: Exception) {
                 staged.forEach { it.file.delete() }
                 mutable.update { it.copy(sharing = false, shareProgress = null, error = e.message ?: "Could not prepare the shared file.") }
@@ -273,7 +302,25 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         stageSharedFiles(uris)
     }
 
-    fun setUploadDirectory(value: String) { mutable.update { it.copy(uploadDirectory = value) } }
+    fun setUploadDirectory(value: String) {
+        prefs.edit { putString("upload_directory", value) }
+        mutable.update { it.copy(uploadDirectory = value) }
+    }
+    fun setGridSize(value: String) {
+        if (value !in setOf("compact", "medium", "large")) return
+        prefs.edit { putString("grid_size", value) }
+        mutable.update { it.copy(gridSize = value) }
+    }
+    fun setSortOrder(value: String) {
+        if (value !in setOf("newest", "oldest", "name")) return
+        prefs.edit { putString("sort_order", value) }
+        mutable.update { it.copy(sortOrder = value) }
+    }
+    fun setDefaultTab(value: String) {
+        if (value !in setOf("photos", "files")) return
+        prefs.edit { putString("default_tab", value) }
+        mutable.update { it.copy(defaultTab = value) }
+    }
     fun dismissShare() {
         mutable.value.sharedFiles.forEach { it.file.delete() }
         mutable.update { it.copy(sharedFiles = emptyList()) }
@@ -319,12 +366,35 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         if (!mutable.value.signedIn) return
         browseJob?.cancel()
         val current = api
+        val aggregateLibraries = path == null && !mutable.value.choosing && mutable.value.photoFolders.isNotEmpty()
         mutable.update { it.copy(path = path, entries = emptyList(), busy = true, error = null) }
         browseJob = viewModelScope.launch {
             try {
                 val drives = if (path == null || mutable.value.drives.isEmpty()) current.roots() else mutable.value.drives
-                val entries = if (path != null) current.list(path) else emptyList()
-                if (api === current && mutable.value.signedIn) mutable.update { it.copy(drives = drives, entries = entries, busy = false) }
+                var unavailable: List<String> = emptyList()
+                val entries = when {
+                    path != null -> current.list(path)
+                    aggregateLibraries -> {
+                        val failed = mutableListOf<String>()
+                        val folderContents = mutableListOf<List<PhotoEntry>>()
+                        mutable.value.photoFolders.forEach { folder ->
+                            try { folderContents += current.list(folder) }
+                            catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                failed += folder
+                            }
+                        }
+                        unavailable = failed
+                        combinePhotoFolders(folderContents)
+                    }
+                    else -> emptyList()
+                }
+                val folderError = unavailable.takeIf { it.isNotEmpty() }?.let {
+                    "Could not load ${it.size} photo folder(s): ${it.joinToString { path -> path.substringAfterLast('/') }}. Check the folder or remove it in Settings."
+                }
+                if (api === current && mutable.value.signedIn) mutable.update {
+                    it.copy(drives = drives, entries = entries, busy = false, error = folderError)
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (api === current) mutable.update { it.copy(busy = false, error = message(e)) }
@@ -350,18 +420,29 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun up() {
-        val path = mutable.value.path ?: return
-        browse(if ('/' in path) path.substringBeforeLast('/') else null)
+        val state = mutable.value
+        val path = state.path ?: return
+        val parent = if ('/' in path) path.substringBeforeLast('/') else null
+        if (state.choosing) browse(parent)
+        else if (path in state.photoFolders || (parent != null && parent in state.photoFolders)) home()
+        else browse(parent)
     }
     fun chooseFolder() { mutable.update { it.copy(choosing = true) }; browse(null) }
     fun selectFolder() {
         val path = mutable.value.path ?: return
         if (mutable.value.busy || mutable.value.error != null) return
-        prefs.edit { putString("library", path) }
-        mutable.update { it.copy(library = path, choosing = false) }
+        val alreadyAdded = path in mutable.value.photoFolders
+        if (!alreadyAdded) savePhotoFolders(mutable.value.photoFolders + path)
+        mutable.update { it.copy(choosing = false, notice = if (alreadyAdded) "Folder is already in your photo gallery." else "Folder added to your combined photo gallery.") }
+        browse(null)
     }
-    fun cancelFolder() { mutable.update { it.copy(choosing = false) }; browse(mutable.value.library) }
-    fun home() { browse(mutable.value.library) }
+    fun cancelFolder() { mutable.update { it.copy(choosing = false) }; home() }
+    fun removePhotoFolder(path: String) {
+        savePhotoFolders(mutable.value.photoFolders - path)
+        mutable.update { it.copy(choosing = false) }
+        home()
+    }
+    fun home() { browse(null) }
     fun chooseTheme(id: String?) {
         prefs.edit { putString("theme", id) }
         mutable.update { it.copy(themeChoice = id) }

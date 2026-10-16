@@ -57,15 +57,17 @@ fun PhotoApp(
     unlockPassword: (onPassword: (String) -> Unit) -> Unit,
 ) {
     var settings by rememberSaveable { mutableStateOf(false) }
-    var section by rememberSaveable { mutableStateOf("photos") }
+    var section by rememberSaveable(state.defaultTab) { mutableStateOf(state.defaultTab) }
+    var folderManagerOpen by rememberSaveable { mutableStateOf(false) }
+    var returnToSettingsAfterFolderPick by rememberSaveable { mutableStateOf(false) }
     var themePicker by rememberSaveable { mutableStateOf(false) }
     var uploadsOpen by rememberSaveable { mutableStateOf(false) }
     var confirmTokenAccess by rememberSaveable { mutableStateOf(false) }
     var viewing by rememberSaveable(state.path, state.filePath, state.signedIn) { mutableStateOf<String?>(null) }
     var viewerFromFiles by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable(state.path) { mutableStateOf("") }
-    val photos = remember(state.entries, query) {
-        state.entries.filter { it.image && it.name.contains(query, ignoreCase = true) }.sortedByDescending { it.modified }
+    val photos = remember(state.entries, query, state.sortOrder) {
+        sortLibraryPhotos(state.entries.filter { it.image && it.name.contains(query, ignoreCase = true) }, state.sortOrder)
     }
     val filePhotos = remember(state.fileEntries) { state.fileEntries.filter { it.image }.sortedByDescending { it.modified } }
     val snackbar = remember { SnackbarHostState() }
@@ -90,9 +92,18 @@ fun PhotoApp(
     LaunchedEffect(state.notice) {
         state.notice?.let { snackbar.showSnackbar(it); model.clearNotice() }
     }
+    LaunchedEffect(state.choosing, returnToSettingsAfterFolderPick) {
+        if (!state.choosing && returnToSettingsAfterFolderPick) {
+            settings = true
+            returnToSettingsAfterFolderPick = false
+        }
+    }
+    LaunchedEffect(state.signedIn, section) {
+        if (state.signedIn && section == "files") model.browseFiles(state.filePath)
+    }
     // Refresh the server palette when the app returns from the browser.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { model.refreshThemes() }
-    BackHandler(state.signedIn && section == "photos" && viewing == null && (state.choosing || state.path != state.library)) {
+    BackHandler(state.signedIn && section == "photos" && viewing == null && (state.choosing || state.path != null)) {
         if (state.choosing && state.path == null) model.cancelFolder() else model.up()
     }
     BackHandler(state.signedIn && section == "files" && viewing == null && state.filePath != null) {
@@ -119,7 +130,7 @@ fun PhotoApp(
             bottomBar = {
                 if (state.signedIn) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     NavigationBarItem(selected = section == "photos" && !settings, onClick = { section = "photos"; settings = false; model.home() }, icon = { Icon(Icons.Outlined.PhotoLibrary, null) }, label = { Text("Photos") })
-                    NavigationBarItem(selected = section == "files" && !settings, onClick = { section = "files"; settings = false; model.browseFiles(state.filePath) }, icon = { Icon(Icons.Outlined.FolderOpen, null) }, label = { Text("Files") })
+                    NavigationBarItem(selected = section == "files" && !settings, onClick = { section = "files"; settings = false }, icon = { Icon(Icons.Outlined.FolderOpen, null) }, label = { Text("Files") })
                     NavigationBarItem(selected = settings, onClick = { settings = true }, icon = { Icon(Icons.Outlined.Settings, null) }, label = { Text("Settings") })
                 }
             },
@@ -157,10 +168,20 @@ fun PhotoApp(
         }
     }
     if (settings) SettingsSheet(model, state, { themePicker = true }, ::openWeb, requestTokenAccess, {
-        section = "photos"
         settings = false
-        model.chooseFolder()
+        folderManagerOpen = true
     }) { settings = false }
+    if (folderManagerOpen) ManagePhotoFoldersSheet(
+        folders = state.photoFolders,
+        remove = model::removePhotoFolder,
+        add = {
+            folderManagerOpen = false
+            section = "photos"
+            returnToSettingsAfterFolderPick = true
+            model.chooseFolder()
+        },
+        close = { folderManagerOpen = false },
+    )
     if (themePicker) ThemePicker(model, state) { themePicker = false }
     if (state.sharing) AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("Preparing uploads") }, text = { Text(state.shareProgress ?: "Copying shared files…") })
     if (state.sharedFiles.isNotEmpty() && state.signedIn) ShareUploadDialog(model, state, onEnableUploads = requestTokenAccess, close = model::dismissShare)
@@ -265,7 +286,8 @@ private fun LoginScreen(
 @Composable
 private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntry>, query: String, queryChanged: (String) -> Unit, open: (PhotoEntry) -> Unit, modifier: Modifier) {
     val folders = state.entries.filter { it.folder && (state.choosing || it.name.contains(query, true)) }
-    LazyVerticalGrid(columns = GridCells.Adaptive(112.dp), modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val minimumTileSize = when (state.gridSize) { "compact" -> 92.dp; "large" -> 164.dp; else -> 124.dp }
+    LazyVerticalGrid(columns = GridCells.Adaptive(minimumTileSize), modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.padding(bottom = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -274,7 +296,8 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
                 }
                 Text(if (state.choosing) "Choose a folder" else state.path?.substringAfterLast('/') ?: "Your libraries", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(8.dp))
-                Text(if (state.choosing) "Browse your server and choose where your photos live." else "${photos.size} photos · ${folders.size} albums", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val librarySummary = if (state.path == null && state.photoFolders.isNotEmpty()) "${photos.size} photos · ${folders.size} albums · ${state.photoFolders.size} folders combined" else "${photos.size} photos · ${folders.size} albums"
+                Text(if (state.choosing) "Browse your server and add a folder to your combined photo gallery." else librarySummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (state.path != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Parent folder", model::up)
@@ -282,8 +305,9 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
                     }
                 }
                 if (state.choosing) {
-                    GradientButton("USE THIS FOLDER", !state.busy && state.path != null && state.error == null, model::selectFolder)
-                    if (state.library != null) TextButton(onClick = model::cancelFolder) { Text("Cancel") }
+                    val alreadyAdded = state.path != null && state.path in state.photoFolders
+                    GradientButton(if (alreadyAdded) "FOLDER ALREADY ADDED" else "ADD THIS FOLDER", !state.busy && state.path != null && state.error == null && !alreadyAdded, model::selectFolder)
+                    if (state.photoFolders.isNotEmpty()) TextButton(onClick = model::cancelFolder) { Text("Cancel") }
                 } else OutlinedTextField(query, queryChanged, Modifier.fillMaxWidth(), placeholder = { Text("Find in this folder") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true)
             }
         }
@@ -291,7 +315,7 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
         state.error?.let { error -> item(span = { GridItemSpan(maxLineSpan) }) {
             StatusCard(Icons.Outlined.CloudOff, "Connection interrupted", error, "Try again") { model.browse(state.path) }
         } }
-        if (state.path == null && !state.busy && state.error == null) {
+        if (state.path == null && (state.choosing || state.photoFolders.isEmpty()) && !state.busy && state.error == null) {
             items(state.drives, key = { "drive/${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { drive ->
                 OutlinedCard(onClick = { model.browse(drive.id) }, enabled = drive.online, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -319,7 +343,7 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
             }
         }
         if (!state.choosing) {
-            if (photos.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Text("LATEST IN THIS FOLDER", Modifier.padding(top = 18.dp, bottom = 8.dp), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (photos.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Text(if (state.path == null) "ALL SELECTED FOLDERS" else "LATEST IN THIS FOLDER", Modifier.padding(top = 18.dp, bottom = 8.dp), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(photos, key = { it.path }) { photo ->
                 Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable { open(photo) }) {
                     SubcomposeAsyncImage(
@@ -333,8 +357,8 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
                     }
                 }
             }
-            if (state.path != null && photos.isEmpty() && !state.busy && state.error == null) item(span = { GridItemSpan(maxLineSpan) }) {
-                StatusCard(Icons.Outlined.PhotoLibrary, if (query.isEmpty()) "Room for memories" else "No matching photos", if (query.isEmpty()) "This folder has no photos yet. Open an album above or choose another folder." else "Try a different filename.", "Choose folder", model::chooseFolder)
+            if ((state.path != null || state.photoFolders.isNotEmpty()) && photos.isEmpty() && !state.busy && state.error == null) item(span = { GridItemSpan(maxLineSpan) }) {
+                StatusCard(Icons.Outlined.PhotoLibrary, if (query.isEmpty()) "Room for memories" else "No matching photos", if (query.isEmpty()) "These folders have no photos yet. Add a folder or open an album above." else "Try a different filename.", "Add folder", model::chooseFolder)
             }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(16.dp)) }
@@ -430,7 +454,7 @@ private fun FileBrowser(
 }
 
 @Composable
-private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, choosePhotoFolder: () -> Unit, close: () -> Unit) {
+private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, manageFolders: () -> Unit, close: () -> Unit) {
     var address by remember { mutableStateOf(state.server) }
     var error by remember { mutableStateOf<String?>(null) }
     ModalBottomSheet(onDismissRequest = close) {
@@ -454,7 +478,23 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
                 }
             }
             HorizontalDivider()
-            ListItem(headlineContent = { Text("Photo folder") }, supportingContent = { Text(state.library ?: "Choose after signing in") }, leadingContent = { Icon(Icons.Outlined.FolderOpen, null) }, modifier = Modifier.clickable(enabled = state.signedIn) { choosePhotoFolder() })
+            ListItem(
+                headlineContent = { Text("Manage photo folders") },
+                supportingContent = { Text(if (state.photoFolders.isEmpty()) "Choose server folders to combine in Photos" else "${state.photoFolders.size} folders combined in Photos") },
+                leadingContent = { Icon(Icons.Outlined.FolderOpen, null) },
+                modifier = Modifier.clickable(enabled = state.signedIn) { manageFolders() },
+            )
+            SettingChoiceRow("Photo grid size", state.gridSize, listOf("compact" to "Small", "medium" to "Medium", "large" to "Large"), model::setGridSize)
+            SettingChoiceRow("Sort photos by", state.sortOrder, listOf("newest" to "Newest", "oldest" to "Oldest", "name" to "Name"), model::setSortOrder)
+            SettingChoiceRow("Default tab", state.defaultTab, listOf("photos" to "Photos", "files" to "Files"), model::setDefaultTab)
+            OutlinedTextField(
+                value = state.uploadDirectory,
+                onValueChange = model::setUploadDirectory,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Default upload destination") },
+                supportingText = { Text("Holodrive folder path, for example shared/from-phone") },
+                singleLine = true,
+            )
             ListItem(headlineContent = { Text("Appearance") }, supportingContent = { Text(when (state.themeChoice) {
                 null -> "Follow server"
                 "builtin-cybergrid" -> "CYBERGRID"
@@ -464,6 +504,53 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
             if (state.signedIn) OutlinedButton(onClick = { model.signOut(); close() }) { Icon(Icons.AutoMirrored.Outlined.Logout, null); Text("  Sign out") }
             Text("HOLODRIVE PHOTOS  ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             Text("Device tokens are encrypted with Android Keystore for queued uploads. Passwords remain opt-in and require fingerprint confirmation. Sign out removes the local token; revoke server access from the Holodrive Devices page.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SettingChoiceRow(title: String, selected: String, options: List<Pair<String, String>>, onSelect: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            options.forEach { (value, label) ->
+                FilterChip(
+                    selected = selected == value,
+                    onClick = { onSelect(value) },
+                    label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManagePhotoFoldersSheet(folders: List<String>, remove: (String) -> Unit, add: () -> Unit, close: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = close) {
+        Column(
+            Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Manage photo folders", style = MaterialTheme.typography.headlineMedium)
+            Text("Photos from every selected folder appear together in your Photos gallery.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (folders.isEmpty()) {
+                Text("No photo folders added yet. Add a server folder to start your combined gallery.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                folders.forEach { folder ->
+                    ListItem(
+                        headlineContent = { Text(folder.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(folder, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Outlined.FolderOpen, null, tint = MaterialTheme.colorScheme.primary) },
+                        trailingContent = { TextButton(onClick = { remove(folder) }) { Text("REMOVE") } },
+                    )
+                }
+            }
+            Button(onClick = add, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.CreateNewFolder, null)
+                Text("  ADD FOLDER")
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
