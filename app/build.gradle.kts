@@ -9,6 +9,8 @@ val releaseKeyAlias = System.getenv("HOLODRIVE_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("HOLODRIVE_RELEASE_KEY_PASSWORD")
 val releaseSigningValues = listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword)
 val releaseSigningConfigured = releaseSigningValues.all { !it.isNullOrBlank() }
+val holodriveVersionCode = providers.gradleProperty("holodriveVersionCode").orNull?.toIntOrNull() ?: 1000
+val holodriveVersionName = providers.gradleProperty("holodriveVersionName").orNull ?: "0.1.0"
 if (releaseSigningValues.any { !it.isNullOrBlank() } && !releaseSigningConfigured) {
     throw GradleException("Release signing requires all HOLODRIVE_RELEASE_* environment variables.")
 }
@@ -20,8 +22,8 @@ android {
         applicationId = "dev.cybercore.holodrive.photos"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = holodriveVersionCode
+        versionName = holodriveVersionName
         buildConfigField("boolean", "SCRATCH_SERVER", "false")
         buildConfigField("boolean", "ALLOW_SCREENSHOTS", "false")
     }

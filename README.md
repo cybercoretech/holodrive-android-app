@@ -1,10 +1,22 @@
-# Holodrive Photos
+# 📸 Holodrive Photos
 
 A native Android client for [Holodrive](https://github.com/cybercore-tech/holodrive), with separate Photos and Files navigation, device-token sign-in, and resumable background uploads from Android's share sheet.
 
 **Application ID:** `dev.cybercore.holodrive.photos` (debug: `.debug`). Android 11+, Kotlin / Jetpack Compose / Material 3. This is an early release build and is not published through an app store.
 
-## Using the app
+## 📲 Install Holodrive Photos
+
+**[Download the latest signed APK](https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk)** · [Release notes and checksums](https://github.com/cybercore-tech/holodrive-android-app/releases/latest) · [Install with Obtainium](https://github.com/cybercore-tech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercore-tech.github.io/holodrive-android-app/)
+
+```sh
+curl -fL -o holodrive-photos.apk https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
+curl -fL -o holodrive-photos.apk.sha256 https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
+sha256sum --check holodrive-photos.apk.sha256
+```
+
+Android 11 or newer is required. To update, install a newer signed release over the existing app; Android verifies that updates use the same signing key. For automatic update checks, install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add app**, and enter `https://github.com/cybercore-tech/holodrive-android-app`.
+
+## 🚀 Using the app
 
 1. Open **Configure your server**. Enter an HTTPS Holodrive origin, or a full Tailscale URL such as `http://blackbox.tail9311b5.ts.net:8768`. Include the port your server actually uses. HTTP IP addresses, LAN hostnames, embedded credentials, and path prefixes are rejected.
 2. Connect Tailscale if using a tailnet server. Sign in with the Holodrive password, or create a token on the server's **Devices** page and choose **Device token**. You can also enable background uploads from Settings after password sign-in; the app creates a dedicated device token for this phone.
@@ -17,7 +29,7 @@ A native Android client for [Holodrive](https://github.com/cybercore-tech/holodr
 
 The gallery still displays folders and raster photos; non-photo files, hidden names, and links escaping the shared root are excluded. Uploads accept files shared by other Android apps. Automatic camera backup, file deletion, video playback, and server administration are not included.
 
-## Security and privacy
+## 🛡️ Security and privacy
 
 - HTTPS uses the normal Android certificate trust store; no certificate bypasses.
 - Plain HTTP is permitted only for `*.ts.net` in Android's network configuration. Each request is additionally confined to the **exact configured scheme, host, and port**. HTTP DNS results must be within Tailscale's IPv4 / IPv6 ranges. System HTTP proxies and redirects are disabled.
@@ -30,7 +42,7 @@ The gallery still displays folders and raster photos; non-photo files, hidden na
 
 See [PRIVACY.md](docs/PRIVACY.md) and [VALIDATION.md](docs/VALIDATION.md).
 
-## Build
+## 🧰 Build
 
 Use JDK 21, Android SDK 36 / build tools 36.0.0, and the checked-in Gradle wrapper. `local.properties` should contain your SDK path and is ignored by Git.
 
@@ -55,7 +67,7 @@ set +a
 
 The signed APK is written under `app/build/outputs/apk/server/release/`. Keep the keystore backed up securely; future app updates must use this same key. The pinned stack matches CybercoreContinuity; dependency/target upgrade advisories remain visible in lint.
 
-## Isolated emulator testing
+## 🧪 Isolated emulator testing
 
 Never test wrong passwords or change files on the production instance. `tools/prepare_scratch.py` creates synthetic photos and a separate password-protected config under a private temporary directory (Python Pillow and argon2-cffi required). Its random scratch password is kept in `~/.local/share/holodrive-photos/scratch-password` (mode 0600) and reused across scratch server rebuilds; save it in the browser's password manager once for the local GUI. This credential is only for the loopback test server, not your real Holodrive server. In Android Studio select **View → Tool Windows → Device Manager** and start `Blackbox_API_36`. Open the **Build Variants** tool window, select `scratchDebug`, then press **Run ▶ app**. This is a separate install that points to generated photos.
 
@@ -72,10 +84,16 @@ With the scratch server and emulator running, use `python3 tools/emulator_ui.py 
 
 The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopback, preserving Holodrive's Host header. It can display screenshots of generated fixtures. Both release variants always protect screenshots and never use the loopback override. Select the ordinary `debug` variant before using a configured real server or sharing a debug APK. Screenshots in `docs/screenshots` contain generated fixtures, never personal photos.
 
-## Release preparation
+## 🔄 Automatic updates with Obtainium
+
+1. Install Obtainium from its [official GitHub releases](https://github.com/ImranR98/Obtainium/releases/latest).
+2. Tap **Add app** and paste `https://github.com/cybercore-tech/holodrive-android-app`.
+3. Confirm the detected package is `dev.cybercore.holodrive.photos` and save. Obtainium checks GitHub Releases for updates; Android asks before installing each update.
+
+## 📦 Release preparation
 
 The Android source repository is `https://github.com/cybercore-tech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercore-tech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
-Before public distribution: test the real phone over Tailscale, test a separately hosted HTTPS server, review target-SDK/store requirements and dependency updates, select publisher details, publish a privacy-policy URL/contact, choose the source license, and run hosted CI. No release claim is made until these are complete.
+Before a release is tagged, hosted CI must build and test the release variant and the release signing secrets must be configured in the repository. The app source is licensed under [Apache-2.0](LICENSE); bundled JetBrains Mono Nerd font files remain under their separate [OFL](docs/JetBrainsMono-OFL.txt).
 
 JetBrains Mono Nerd font files are bundled under the included [OFL](docs/JetBrainsMono-OFL.txt). The cube is adapted from Holodrive's existing brand asset.
