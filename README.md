@@ -1,6 +1,6 @@
 # Holodrive Photos
 
-A native Android client for [Holodrive](https://github.com/cybercore-tech/holodrive), with a photo gallery, device-token sign-in, and resumable background uploads from Android's share sheet.
+A native Android client for [Holodrive](https://github.com/cybercore-tech/holodrive), with separate Photos and Files navigation, device-token sign-in, and resumable background uploads from Android's share sheet.
 
 **Application ID:** `dev.cybercore.holodrive.photos` (debug: `.debug`). Android 11+, Kotlin / Jetpack Compose / Material 3. This is an early release build and is not published through an app store.
 
@@ -8,9 +8,9 @@ A native Android client for [Holodrive](https://github.com/cybercore-tech/holodr
 
 1. Open **Configure your server**. Enter an HTTPS Holodrive origin, or a full Tailscale URL such as `http://blackbox.tail9311b5.ts.net:8768`. Include the port your server actually uses. HTTP IP addresses, LAN hostnames, embedded credentials, and path prefixes are rejected.
 2. Connect Tailscale if using a tailnet server. Sign in with the Holodrive password, or create a token on the server's **Devices** page and choose **Device token**. You can also enable background uploads from Settings after password sign-in; the app creates a dedicated device token for this phone.
-3. Browse the available drives and folders, then tap **Use this folder**. The folder is remembered on this device. **Folder** in the bottom bar changes it later.
+3. **Photos** asks you to choose a photo library folder the first time; tap **Use this folder** to remember it on this device. You can switch folders later. **Files** is available independently and browses any configured drive, even before you choose a photo library.
 4. Open a subfolder as an album. Photos in the current folder are shown newest-modified first. Search filters filenames in that folder; this is not recursive indexing or EXIF capture-date sorting.
-5. Tap a photo, swipe between photos, pinch or double-tap to zoom. **Save original** streams the original to a location selected through Android's document picker.
+5. Use **Photos** for the selected photo library, or **Files** to browse all configured drives and download any file. In Photos, tap an image, swipe between photos, pinch or double-tap to zoom. **Save original** streams the original to a location selected through Android's document picker.
 6. **Open Holodrive** opens the full server GUI in your browser at the current folder. Browser authentication is separate; passwords and session tokens are never passed in the URL.
 7. Share one or more files from any Android app to **Holodrive Photos**. Choose the destination folder and add them to the upload queue. Uploads run in the background, show progress notifications, resume interrupted chunks, and retry when the network returns.
 8. Select a theme, or follow the server. The theme refreshes on app resume. Low-contrast palette text is adjusted for readability. The included CYBERGRID fallback works when themes are unavailable.
@@ -74,7 +74,7 @@ The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopb
 
 ## Release preparation
 
-The private repository is `https://github.com/cybercore-tech/holodrive`. Android changes are kept on the `feat/photo-gallery` branch. Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
+The Android source repository is `https://github.com/cybercore-tech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercore-tech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
 Before public distribution: test the real phone over Tailscale, test a separately hosted HTTPS server, review target-SDK/store requirements and dependency updates, select publisher details, publish a privacy-policy URL/contact, choose the source license, and run hosted CI. No release claim is made until these are complete.
 

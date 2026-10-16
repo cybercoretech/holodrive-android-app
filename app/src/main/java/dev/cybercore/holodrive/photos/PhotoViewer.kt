@@ -106,7 +106,7 @@ fun PhotoViewer(model: PhotoModel, state: PhotoState, photos: List<PhotoEntry>, 
     }
 }
 
-private class SavePhotoDocument : ActivityResultContract<PhotoEntry, Uri?>() {
+internal class SavePhotoDocument : ActivityResultContract<PhotoEntry, Uri?>() {
     override fun createIntent(context: Context, input: PhotoEntry): Intent =
         Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
             .setType(input.mime).putExtra(Intent.EXTRA_TITLE, input.name)

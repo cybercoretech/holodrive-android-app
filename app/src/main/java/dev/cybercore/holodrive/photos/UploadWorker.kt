@@ -3,8 +3,8 @@ package dev.cybercore.holodrive.photos
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.edit
 import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ForegroundInfo
@@ -66,11 +66,11 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 else if (!status.isSuccessful) { val code = status.code; status.close(); throw UploadHttpException(code, "Could not resume upload ($code).") }
                 else {
                     val received = status.body?.string()?.let(::JSONObject)?.optLong("offset") ?: 0L
-                    checkpoints.edit().putString(idKey(), resumeId).commit()
+                    checkpoints.edit(commit = true) { putString(idKey(), resumeId) }
                     transfer(client, server, token, file, resumeId, received, size, name)
                     finish(client, server, token, resumeId)
-                    checkpoints.edit().remove(idKey()).apply()
-                    queueMetadata(applicationContext).edit().remove(this@UploadWorker.id.toString()).apply()
+                    checkpoints.edit { remove(idKey()) }
+                    queueMetadata(applicationContext).edit { remove(this@UploadWorker.id.toString()) }
                     file.delete()
                     return@withContext Result.success()
                 }
@@ -79,11 +79,11 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             val response = request(client, server, token, "POST", "upload/start", body = start)
             if (!response.isSuccessful) { val code = response.code; response.close(); throw UploadHttpException(code, "Could not start upload ($code).") }
             id = response.body?.string()?.let(::JSONObject)?.getString("id") ?: throw IOException("The server did not return an upload id.")
-            checkpoints.edit().putString(idKey(), id).commit()
+            checkpoints.edit(commit = true) { putString(idKey(), id) }
             transfer(client, server, token, file, id, 0, size, name)
             finish(client, server, token, id)
-            checkpoints.edit().remove(idKey()).apply()
-            queueMetadata(applicationContext).edit().remove(this@UploadWorker.id.toString()).apply()
+            checkpoints.edit { remove(idKey()) }
+            queueMetadata(applicationContext).edit { remove(this@UploadWorker.id.toString()) }
             file.delete()
             Result.success()
         } catch (e: UploadHttpException) {
@@ -160,7 +160,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 
     private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT >= 26) notifications.createNotificationChannel(
+        notifications.createNotificationChannel(
             NotificationChannel(CHANNEL, "Holodrive uploads", NotificationManager.IMPORTANCE_LOW),
         )
     }
@@ -222,9 +222,9 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                     .addTag(TAG).addTag(TAG_NAME + name.take(128)).addTag(TAG_SIZE + file.length()).build()
-                queueMetadata(context).edit().putString(request.id.toString(), JSONObject()
+                queueMetadata(context).edit { putString(request.id.toString(), JSONObject()
                     .put(KEY_FILE, file.absolutePath).put(KEY_NAME, name).put(KEY_SIZE, file.length())
-                    .put(KEY_DIR, dir).put(KEY_SERVER, server).toString()).apply()
+                    .put(KEY_DIR, dir).put(KEY_SERVER, server).toString()) }
                 request
             }
             if (requests.isNotEmpty()) WorkManager.getInstance(context)
@@ -249,7 +249,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .addTag(TAG).addTag(TAG_NAME + name.take(128)).addTag(TAG_SIZE + size).build()
-            queueMetadata(context).edit().putString(request.id.toString(), saved.toString()).apply()
+            queueMetadata(context).edit { putString(request.id.toString(), saved.toString()) }
             manager.beginUniqueWork(CHAIN, androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, listOf(request)).enqueue()
         }
     }

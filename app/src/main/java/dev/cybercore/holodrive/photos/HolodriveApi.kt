@@ -67,16 +67,17 @@ class SessionCookies : CookieJar {
 
 class ApiException(val status: Int, message: String) : IOException(message)
 data class Drive(val id: String, val name: String, val icon: String, val online: Boolean)
-data class PhotoEntry(val name: String, val path: String, val folder: Boolean, val mime: String, val size: Long, val modified: Long) {
+data class PhotoEntry(val name: String, val path: String, val folder: Boolean, val image: Boolean, val mime: String, val size: Long, val modified: Long) {
     companion object {
         fun fromJson(folder: String, obj: JSONObject): PhotoEntry? {
             val name = obj.getString("name")
             if (name.startsWith('.') || name.contains('/') || name.contains('\\') || obj.optBoolean("escapes")) return null
             val isFolder = obj.optString("kind") == "dir"
+            if (!isFolder && obj.optString("kind") != "file") return null
             val mime = obj.optString("mime")
-            // SVG is deliberately excluded: this is a raster photo gallery.
-            if (!isFolder && (obj.optString("kind") != "file" || !mime.startsWith("image/") || mime == "image/svg+xml")) return null
-            return PhotoEntry(name, "$folder/$name", isFolder, mime, obj.optLong("size"), obj.optLong("mtime"))
+            // Retain all ordinary files for Files; SVG remains excluded from Photos.
+            val image = !isFolder && mime.startsWith("image/") && mime != "image/svg+xml"
+            return PhotoEntry(name, "$folder/$name", isFolder, image, mime, obj.optLong("size"), obj.optLong("mtime"))
         }
     }
 }

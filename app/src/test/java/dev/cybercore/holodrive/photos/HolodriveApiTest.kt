@@ -101,15 +101,15 @@ class HolodriveApiTest {
         }
     }
 
-    @Test fun galleryExcludesHiddenEscapingAndNonPhotoFiles() {
+    @Test fun listingRetainsFilesButMarksOnlySafeRasterImagesAsPhotos() {
         fun entry(name: String, mime: String = "image/jpeg", escapes: Boolean = false, kind: String = "file") =
             PhotoEntry.fromJson("pictures", JSONObject().put("name", name).put("mime", mime).put("kind", kind).put("escapes", escapes))
-        assertNotNull(entry("été.jpg"))
+        assertTrue(entry("été.jpg")!!.image)
         assertNotNull(entry("vacation", "", kind = "dir"))
         assertNull(entry(".secret.jpg"))
         assertNull(entry("../escape.jpg"))
         assertNull(entry("outside.jpg", escapes = true))
-        assertNull(entry("drawing.svg", "image/svg+xml"))
-        assertNull(entry("notes.txt", "text/plain"))
+        assertFalse(entry("drawing.svg", "image/svg+xml")!!.image)
+        assertFalse(entry("notes.txt", "text/plain")!!.image)
     }
 }
