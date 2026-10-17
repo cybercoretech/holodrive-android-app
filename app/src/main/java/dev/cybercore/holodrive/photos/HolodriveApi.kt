@@ -144,9 +144,22 @@ class HolodriveApi(
         try { roots() } catch (e: Exception) { deviceToken = null; throw e }
     }
 
-    suspend fun createDeviceToken(name: String): String {
-        val result = JSONObject(request("tokens", body = JSONObject().put("name", name).put("read_only", false)))
+    suspend fun createDeviceToken(name: String, readOnly: Boolean = false): String {
+        val result = JSONObject(request("tokens", body = JSONObject().put("name", name).put("read_only", readOnly)))
         return result.getString("token")
+    }
+
+    suspend fun createShareLink(path: String, password: String, days: Int = 7): String {
+        require(password.length in 12..256) { "Use a passphrase between 12 and 256 characters." }
+        require(days in 1..365) { "Share-link expiry must be between 1 and 365 days." }
+        val result = JSONObject(request("links", body = JSONObject()
+            .put("path", path)
+            .put("mode", "view")
+            .put("days", days)
+            .put("password", password)
+        ))
+        val key = result.getString("key")
+        return server.newBuilder().addPathSegment("s").addPathSegment(key).build().toString()
     }
 
     suspend fun logout() { try { request("logout", body = JSONObject()) } finally { clearSession() } }

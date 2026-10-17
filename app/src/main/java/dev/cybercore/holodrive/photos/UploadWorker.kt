@@ -40,6 +40,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val file = inputData.getString(KEY_FILE)?.let(::File) ?: return@withContext Result.failure()
         val name = inputData.getString(KEY_NAME) ?: file.name
         val dir = inputData.getString(KEY_DIR) ?: return@withContext Result.failure()
+        val overwrite = inputData.getBoolean(KEY_OVERWRITE, false)
         val address = inputData.getString(KEY_SERVER) ?: return@withContext Result.failure()
         if (!file.isFile) return@withContext Result.failure()
         val token = try { DeviceTokenVault(applicationContext).read() } catch (_: Exception) { null }
@@ -75,7 +76,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     return@withContext Result.success()
                 }
             }
-            val start = JSONObject().put("dir", dir).put("name", name).put("size", size).toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val start = JSONObject().put("dir", dir).put("name", name).put("size", size).put("overwrite", overwrite).toString().toRequestBody("application/json; charset=utf-8".toMediaType())
             val response = request(client, server, token, "POST", "upload/start", body = start)
             if (!response.isSuccessful) { val code = response.code; response.close(); throw UploadHttpException(code, "Could not start upload ($code).") }
             id = response.body?.string()?.let(::JSONObject)?.getString("id") ?: throw IOException("The server did not return an upload id.")
@@ -206,6 +207,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_BYTES = "bytes"
         const val KEY_TOTAL = "total"
         const val KEY_SIZE = "size"
+        const val KEY_OVERWRITE = "overwrite"
         private const val CHANNEL = "holodrive_uploads"
         private const val NOTIFICATION_ID = 7300
 
@@ -213,10 +215,11 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         fun workDataOfMessage(message: String): Data = Data.Builder().putString("error", message).build()
 
-        fun enqueue(context: Context, server: String, dir: String, staged: List<Pair<File, String>>) {
+        fun enqueue(context: Context, server: String, dir: String, staged: List<Pair<File, String>>, overwrite: Boolean = false) {
             val requests = staged.map { (file, name) ->
                 val requestData = Data.Builder().putString(KEY_FILE, file.absolutePath).putString(KEY_NAME, name)
-                    .putLong(KEY_SIZE, file.length()).putString(KEY_DIR, dir).putString(KEY_SERVER, server).build()
+                    .putLong(KEY_SIZE, file.length()).putString(KEY_DIR, dir).putString(KEY_SERVER, server)
+                    .putBoolean(KEY_OVERWRITE, overwrite).build()
                 val request = androidx.work.OneTimeWorkRequestBuilder<UploadWorker>()
                     .setInputData(requestData)
                     .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -224,7 +227,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     .addTag(TAG).addTag(TAG_NAME + name.take(128)).addTag(TAG_SIZE + file.length()).build()
                 queueMetadata(context).edit { putString(request.id.toString(), JSONObject()
                     .put(KEY_FILE, file.absolutePath).put(KEY_NAME, name).put(KEY_SIZE, file.length())
-                    .put(KEY_DIR, dir).put(KEY_SERVER, server).toString()) }
+                    .put(KEY_DIR, dir).put(KEY_SERVER, server).put(KEY_OVERWRITE, overwrite).toString()) }
                 request
             }
             if (requests.isNotEmpty()) WorkManager.getInstance(context)
@@ -243,7 +246,8 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             val name = saved.getString(KEY_NAME)
             val size = saved.getLong(KEY_SIZE)
             val data = Data.Builder().putString(KEY_FILE, file).putString(KEY_NAME, name).putLong(KEY_SIZE, size)
-                .putString(KEY_DIR, saved.getString(KEY_DIR)).putString(KEY_SERVER, saved.getString(KEY_SERVER)).build()
+                .putString(KEY_DIR, saved.getString(KEY_DIR)).putString(KEY_SERVER, saved.getString(KEY_SERVER))
+                .putBoolean(KEY_OVERWRITE, saved.optBoolean(KEY_OVERWRITE, false)).build()
             val request = androidx.work.OneTimeWorkRequestBuilder<UploadWorker>()
                 .setInputData(data)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())

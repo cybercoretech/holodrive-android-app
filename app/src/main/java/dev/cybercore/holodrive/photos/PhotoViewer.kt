@@ -17,6 +17,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -41,6 +42,7 @@ import java.util.Date
 fun PhotoViewer(model: PhotoModel, state: PhotoState, photos: List<PhotoEntry>, initial: Int, close: () -> Unit) {
     val pager = rememberPagerState(initialPage = initial, pageCount = { photos.size })
     var zoomed by remember { mutableStateOf(false) }
+    var sharingEntry by remember { mutableStateOf<PhotoEntry?>(null) }
     var pendingPath by rememberSaveable { mutableStateOf<String?>(null) }
     val save = rememberLauncherForActivityResult(SavePhotoDocument()) { uri ->
         val entry = photos.firstOrNull { it.path == pendingPath }
@@ -57,6 +59,9 @@ fun PhotoViewer(model: PhotoModel, state: PhotoState, photos: List<PhotoEntry>, 
                 Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                     Text(current.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                     Text("${pager.currentPage + 1} / ${photos.size}", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                }
+                IconButton(onClick = { sharingEntry = current }, enabled = !model.api.isUsingDeviceToken()) {
+                    Icon(Icons.Outlined.Link, "Create password-protected share link")
                 }
                 IconButton(onClick = { pendingPath = current.path; save.launch(current) }, enabled = !state.saving) { Icon(Icons.Outlined.Download, "Save original") }
             }
@@ -102,6 +107,12 @@ fun PhotoViewer(model: PhotoModel, state: PhotoState, photos: List<PhotoEntry>, 
             if (state.saving) LinearProgressIndicator(Modifier.fillMaxWidth())
             state.notice?.let { Text(it, color = Color.White, style = MaterialTheme.typography.bodySmall) }
             Text("Swipe to explore · pinch to zoom", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+        }
+    }
+    sharingEntry?.let { entry ->
+        KeysmithShareLinkDialog(model, state, entry) {
+            sharingEntry = null
+            model.clearShareLink()
         }
     }
 }
