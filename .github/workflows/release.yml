@@ -96,7 +96,7 @@ jobs:
             echo
             echo "Signed Android 11+ APK. See the attached INSTALL.txt for installation, update, and SHA-256 verification instructions."
             echo
-            echo "Install with [Obtainium](https://github.com/ImranR98/Obtainium/releases/latest) by adding `https://github.com/cybercoretech/holodrive-android-app`."
+            echo 'Install with [Obtainium](https://github.com/ImranR98/Obtainium/releases/latest) by adding `https://github.com/cybercoretech/holodrive-android-app`.'
             echo
             echo "The APK and source are licensed under Apache-2.0; bundled font files have a separate OFL license."
           } > dist/RELEASE_NOTES.md
