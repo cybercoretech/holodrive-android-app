@@ -1,22 +1,22 @@
 # 📸 Holodrive Photos
 
-A native Android client for [Holodrive](https://github.com/cybercore-tech/holodrive), with separate Photos and Files navigation, device-token sign-in, and resumable background uploads from Android's share sheet.
+A native Android client for [Holodrive](https://github.com/cybercoretech/holodrive), with separate Photos and Files navigation, device-token sign-in, and resumable background uploads from Android's share sheet.
 
 **Application ID:** `dev.cybercore.holodrive.photos` (debug: `.debug`). Android 11+, Kotlin / Jetpack Compose / Material 3. This is an early release build and is not published through an app store.
 
 ## 📲 Install Holodrive Photos
 
-**[GitHub Releases](https://github.com/cybercore-tech/holodrive-android-app/releases)** · [Install with Obtainium](https://github.com/cybercore-tech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercore-tech.github.io/holodrive-android-app/)
+**[GitHub Releases](https://github.com/cybercoretech/holodrive-android-app/releases)** · [Install with Obtainium](https://github.com/cybercoretech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercoretech.github.io/holodrive-android-app/)
 
 The first signed APK release is being prepared. After `v0.1.0` is published, the stable latest-release download URLs below will be active.
 
 ```sh
-curl -fL -o holodrive-photos.apk https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
-curl -fL -o holodrive-photos.apk.sha256 https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
+curl -fL -o holodrive-photos.apk https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
+curl -fL -o holodrive-photos.apk.sha256 https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
 sha256sum --check holodrive-photos.apk.sha256
 ```
 
-Android 11 or newer is required. To update, install a newer signed release over the existing app; Android verifies that updates use the same signing key. For automatic update checks, install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add app**, and enter `https://github.com/cybercore-tech/holodrive-android-app`.
+Android 11 or newer is required. To update, install a newer signed release over the existing app; Android verifies that updates use the same signing key. For automatic update checks, install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add app**, and enter `https://github.com/cybercoretech/holodrive-android-app`.
 
 ## 🚀 Using the app
 
@@ -96,12 +96,12 @@ The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopb
 ## 🔄 Automatic updates with Obtainium
 
 1. Install Obtainium from its [official GitHub releases](https://github.com/ImranR98/Obtainium/releases/latest).
-2. Tap **Add app** and paste `https://github.com/cybercore-tech/holodrive-android-app`.
+2. Tap **Add app** and paste `https://github.com/cybercoretech/holodrive-android-app`.
 3. Confirm the detected package is `dev.cybercore.holodrive.photos` and save. Obtainium checks GitHub Releases for updates; Android asks before installing each update.
 
 ## 📦 Release preparation
 
-The Android source repository is `https://github.com/cybercore-tech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercore-tech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
+The Android source repository is `https://github.com/cybercoretech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercoretech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
 Before a release is tagged, hosted CI must build and test the release variant and the release signing secrets must be configured in the repository. The app source is licensed under [Apache-2.0](LICENSE); bundled JetBrains Mono Nerd font files remain under their separate [OFL](docs/JetBrainsMono-OFL.txt).
 

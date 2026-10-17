@@ -83,7 +83,7 @@ jobs:
              your browser or file manager to install apps from this source.
           3. For future updates, install Obtainium from its official releases,
              choose Add app, and enter:
-             https://github.com/cybercore-tech/holodrive-android-app
+             https://github.com/cybercoretech/holodrive-android-app
 
           Verify the APK on Linux or macOS:
             sha256sum --check holodrive-photos.apk.sha256
@@ -96,7 +96,7 @@ jobs:
             echo
             echo "Signed Android 11+ APK. See the attached INSTALL.txt for installation, update, and SHA-256 verification instructions."
             echo
-            echo "Install with [Obtainium](https://github.com/ImranR98/Obtainium/releases/latest) by adding `https://github.com/cybercore-tech/holodrive-android-app`."
+            echo "Install with [Obtainium](https://github.com/ImranR98/Obtainium/releases/latest) by adding `https://github.com/cybercoretech/holodrive-android-app`."
             echo
             echo "The APK and source are licensed under Apache-2.0; bundled font files have a separate OFL license."
           } > dist/RELEASE_NOTES.md
