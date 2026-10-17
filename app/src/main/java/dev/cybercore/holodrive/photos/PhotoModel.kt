@@ -46,6 +46,9 @@ data class PhotoState(
     val ghostPortStatus: GhostPortStatus? = null,
     val ghostPortError: String? = null,
     val checkingGhostPort: Boolean = false,
+    val cyberVaultStatus: CyberVaultStatus? = null,
+    val cyberVaultStatusError: String? = null,
+    val checkingCyberVault: Boolean = false,
     val themeChoice: String? = null,
     val gridSize: String = "medium",
     val sortOrder: String = "newest",
@@ -65,6 +68,8 @@ data class PhotoState(
     val shareProgress: String? = null,
     val creatingShareLink: Boolean = false,
     val shareLink: String? = null,
+    val savingCyberVault: Boolean = false,
+    val cyberVaultNotice: String? = null,
     val uploadDirectory: String = "shared/from-phone",
     val uploads: List<UploadItem> = emptyList(),
 )
@@ -460,7 +465,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
             mutable.update { it.copy(error = "Creating share links requires a password sign-in. Device tokens cannot manage links.") }
             return
         }
-        mutable.update { it.copy(creatingShareLink = true, shareLink = null, error = null) }
+        mutable.update { it.copy(creatingShareLink = true, shareLink = null, cyberVaultNotice = null, error = null) }
         viewModelScope.launch {
             try {
                 val link = api.createShareLink(path, passphrase)
@@ -471,7 +476,25 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun clearShareLink() { mutable.update { it.copy(creatingShareLink = false, shareLink = null) } }
+    fun clearShareLink() { mutable.update { it.copy(creatingShareLink = false, shareLink = null, savingCyberVault = false, cyberVaultNotice = null) } }
+    fun saveShareToCyberVault(label: String, link: String, passphrase: String) {
+        if (api.isUsingDeviceToken()) {
+            mutable.update { it.copy(cyberVaultNotice = "Sign in with your Holodrive password to save secrets to CyberVault.") }
+            return
+        }
+        val current = api
+        mutable.update { it.copy(savingCyberVault = true, cyberVaultNotice = null) }
+        viewModelScope.launch {
+            try {
+                val saved = current.saveShareToCyberVault(label, link, passphrase)
+                if (api === current) mutable.update { it.copy(savingCyberVault = false, cyberVaultNotice = "Saved ‘$saved’ to CyberVault.") }
+            } catch (e: Exception) {
+                if (api === current) mutable.update {
+                    it.copy(savingCyberVault = false, cyberVaultNotice = e.message ?: "CyberVault bridge is unavailable. Start `cybervault bridge` on the server.")
+                }
+            }
+        }
+    }
     fun removeSyncPair(id: String) {
         SyncWorker.cancel(getApplication(), id)
         saveSyncPairs(mutable.value.syncPairs.filterNot { it.id == id })
@@ -694,6 +717,21 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                         ghostPortError = if (e is ApiException && e.status == 404) "Update the HOLODRIVE server to enable GhostPort status." else "Could not read GhostPort status. Check the server integration and try again.",
                         checkingGhostPort = false,
                     )
+                }
+            }
+        }
+    }
+    fun refreshCyberVault() {
+        if (!mutable.value.signedIn || mutable.value.checkingCyberVault) return
+        val current = api
+        mutable.update { it.copy(checkingCyberVault = true, cyberVaultStatusError = null) }
+        viewModelScope.launch {
+            try {
+                val result = current.cyberVaultStatus()
+                if (api === current) mutable.update { it.copy(cyberVaultStatus = result, cyberVaultStatusError = null, checkingCyberVault = false) }
+            } catch (e: Exception) {
+                if (api === current) mutable.update {
+                    it.copy(cyberVaultStatus = null, cyberVaultStatusError = if (e is ApiException && e.status == 404) "Update the HOLODRIVE server to enable CyberVault." else "Could not read CyberVault bridge status.", checkingCyberVault = false)
                 }
             }
         }

@@ -102,7 +102,7 @@ fun PhotoApp(
         if (rememberedPassword) unlockPassword { password -> model.signIn(password) }
     }
     LaunchedEffect(settings, state.signedIn) {
-        if (settings && state.signedIn) model.refreshGhostPort()
+        if (settings && state.signedIn) { model.refreshGhostPort(); model.refreshCyberVault() }
     }
     LaunchedEffect(state.error, rememberedPassword) {
         if (state.error == "Your session expired. Sign in again." && rememberedPassword) {
@@ -563,6 +563,7 @@ internal fun KeysmithShareLinkDialog(model: PhotoModel, state: PhotoState, entry
     var wordCount by remember(entry.path) { mutableIntStateOf(6) }
     var passphrase by remember(entry.path) { mutableStateOf("") }
     var copied by remember(entry.path) { mutableStateOf(false) }
+    var vaultLabel by remember(entry.path) { mutableStateOf("HOLODRIVE · ${entry.name}") }
     AlertDialog(
         onDismissRequest = { if (!state.creatingShareLink) close() },
         title = { Text(if (state.shareLink == null) "Create a protected link" else "Share link ready") },
@@ -590,6 +591,14 @@ internal fun KeysmithShareLinkDialog(model: PhotoModel, state: PhotoState, entry
                     SelectionContainer { Text(passphrase, style = MaterialTheme.typography.titleMedium) }
                     Text("The link expires in 7 days. Holodrive stores only a password hash.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TextButton(onClick = { copySensitiveText(context, "Holodrive share link", state.shareLink); copied = true }) { Text(if (copied) "LINK COPIED" else "COPY LINK") }
+                    OutlinedTextField(vaultLabel, { vaultLabel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("CyberVault entry label") }, singleLine = true)
+                    OutlinedButton(
+                        onClick = { model.saveShareToCyberVault(vaultLabel.trim(), state.shareLink, passphrase) },
+                        enabled = vaultLabel.isNotBlank() && !state.savingCyberVault && !model.api.isUsingDeviceToken(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (state.savingCyberVault) "SAVING TO CYBERVAULT…" else "SAVE LINK + PASSPHRASE TO CYBERVAULT") }
+                    state.cyberVaultNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("Saved")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
+                    if (model.api.isUsingDeviceToken()) Text("Password sign-in is required; device tokens cannot store secrets.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -642,6 +651,14 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
         state.ghostPortStatus.connected -> "Connected · ${state.ghostPortStatus.role ?: "peer"} · ${state.ghostPortStatus.links.size} link(s)"
         else -> "GhostPort is running, but its peer is disconnected."
     }
+    val cyberVaultDescription = when {
+        state.checkingCyberVault -> "Checking CyberVault bridge…"
+        state.cyberVaultStatusError != null -> state.cyberVaultStatusError
+        state.cyberVaultStatus == null -> "Sign in to check the local encrypted vault."
+        !state.cyberVaultStatus.available -> "CyberVault bridge is stopped. Run cybervault bridge on the server."
+        state.cyberVaultStatus.unlocked -> "Unlocked and ready to store share links."
+        else -> "CyberVault bridge is available but locked."
+    }
     ModalBottomSheet(onDismissRequest = close) {
         Column(Modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Your connection", style = MaterialTheme.typography.headlineMedium)
@@ -660,6 +677,14 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
             )
             OutlinedButton(onClick = model::refreshGhostPort, enabled = state.signedIn && !state.checkingGhostPort, modifier = Modifier.fillMaxWidth()) {
                 Text(if (state.checkingGhostPort) "CHECKING…" else "REFRESH TUNNEL STATUS")
+            }
+            ListItem(
+                headlineContent = { Text("CyberVault") },
+                supportingContent = { Text(cyberVaultDescription) },
+                leadingContent = { Icon(Icons.Outlined.Key, null) },
+            )
+            OutlinedButton(onClick = model::refreshCyberVault, enabled = state.signedIn && !state.checkingCyberVault, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.checkingCyberVault) "CHECKING…" else "REFRESH CYBERVAULT STATUS")
             }
             HorizontalDivider()
             ListItem(

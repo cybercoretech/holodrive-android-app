@@ -85,6 +85,7 @@ data class ServerTheme(val id: String, val name: String, val palette: Map<String
 data class ThemeCatalog(val active: String, val themes: List<ServerTheme>)
 data class GhostPortLinkStatus(val id: String, val mode: String, val activeStreams: Long, val bytesRelayed: Long)
 data class GhostPortStatus(val available: Boolean, val connected: Boolean, val reason: String?, val role: String?, val uptimeSeconds: Long, val links: List<GhostPortLinkStatus>)
+data class CyberVaultStatus(val available: Boolean, val unlocked: Boolean, val reason: String?)
 
 class HolodriveApi(
     val server: HttpUrl,
@@ -209,6 +210,21 @@ class HolodriveApi(
                 )
             },
         )
+    }
+    suspend fun cyberVaultStatus(): CyberVaultStatus {
+        val result = JSONObject(request("integrations/cybervault/status"))
+        return CyberVaultStatus(result.optBoolean("available"), result.optBoolean("unlocked"), result.optString("reason").takeIf(String::isNotBlank))
+    }
+    suspend fun saveShareToCyberVault(label: String, link: String, passphrase: String): String {
+        check(!isUsingDeviceToken()) { "Sign in with your Holodrive password to save secrets to CyberVault." }
+        val secret = "Link: $link\nPassphrase: $passphrase"
+        val result = JSONObject(request("integrations/cybervault/store", body = JSONObject()
+            .put("label", label)
+            .put("secret", secret)))
+        if (!result.optBoolean("stored")) {
+            throw IOException("CyberVault did not store this share (${result.optString("reason", "bridge unavailable")}).")
+        }
+        return result.optString("label", label)
     }
     suspend fun download(path: String, stream: OutputStream) = withContext(Dispatchers.IO) {
         client.newCall(Request.Builder().url(url("raw", path)).build()).execute().use { response ->

@@ -35,6 +35,8 @@ From a photo viewer or a file's details sheet, create a password-protected share
 
 **Settings → Network security** shows the live GhostPort control-channel and link status from the authenticated, read-only HOLODRIVE API. The phone never receives GhostPort private keys or peer addresses.
 
+After creating a protected share, choose **Save link + passphrase to CyberVault** to append the bundle to your unlocked CyberVault on the HOLODRIVE server. Start `cybervault bridge` in a local server terminal first. This requires password sign-in; device-token sessions are not allowed to store secrets. CyberVault refuses duplicate labels rather than replacing an existing secret.
+
 ## 🛡️ Security and privacy
 
 - HTTPS uses the normal Android certificate trust store; no certificate bypasses.
