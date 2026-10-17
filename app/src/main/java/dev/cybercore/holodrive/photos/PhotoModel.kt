@@ -43,6 +43,9 @@ data class PhotoState(
     val fileBusy: Boolean = false,
     val fileError: String? = null,
     val catalog: ThemeCatalog = ThemeCatalog("", emptyList()),
+    val ghostPortStatus: GhostPortStatus? = null,
+    val ghostPortError: String? = null,
+    val checkingGhostPort: Boolean = false,
     val themeChoice: String? = null,
     val gridSize: String = "medium",
     val sortOrder: String = "newest",
@@ -674,6 +677,25 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 if (api === current) mutable.update { it.copy(catalog = themes) }
             } catch (_: IOException) { /* Offline use retains the fallback palette. */ }
             catch (_: org.json.JSONException) { /* Older servers may not expose themes. */ }
+        }
+    }
+    fun refreshGhostPort() {
+        if (!mutable.value.signedIn || mutable.value.checkingGhostPort) return
+        val current = api
+        mutable.update { it.copy(checkingGhostPort = true, ghostPortError = null) }
+        viewModelScope.launch {
+            try {
+                val result = current.ghostPortStatus()
+                if (api === current) mutable.update { it.copy(ghostPortStatus = result, ghostPortError = null, checkingGhostPort = false) }
+            } catch (e: Exception) {
+                if (api === current) mutable.update {
+                    it.copy(
+                        ghostPortStatus = null,
+                        ghostPortError = if (e is ApiException && e.status == 404) "Update the HOLODRIVE server to enable GhostPort status." else "Could not read GhostPort status. Check the server integration and try again.",
+                        checkingGhostPort = false,
+                    )
+                }
+            }
         }
     }
     fun savePhoto(entry: PhotoEntry, uri: Uri) {

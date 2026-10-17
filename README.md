@@ -33,6 +33,8 @@ The gallery still displays folders and raster photos; non-photo files, hidden na
 
 From a photo viewer or a file's details sheet, create a password-protected share link. Choose **Generate with Keysmith** to make a passphrase locally, then share the link and passphrase separately. Link creation requires password sign-in; device tokens cannot manage links.
 
+**Settings → Network security** shows the live GhostPort control-channel and link status from the authenticated, read-only HOLODRIVE API. The phone never receives GhostPort private keys or peer addresses.
+
 ## 🛡️ Security and privacy
 
 - HTTPS uses the normal Android certificate trust store; no certificate bypasses.

@@ -101,6 +101,9 @@ fun PhotoApp(
     LaunchedEffect(Unit) {
         if (rememberedPassword) unlockPassword { password -> model.signIn(password) }
     }
+    LaunchedEffect(settings, state.signedIn) {
+        if (settings && state.signedIn) model.refreshGhostPort()
+    }
     LaunchedEffect(state.error, rememberedPassword) {
         if (state.error == "Your session expired. Sign in again." && rememberedPassword) {
             unlockPassword { password -> model.signIn(password) }
@@ -631,6 +634,14 @@ private fun openFileEntry(entry: PhotoEntry, model: PhotoModel, openImage: (Phot
 private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, managePhotoFolders: () -> Unit, manageFileFolders: () -> Unit, manageSync: () -> Unit, close: () -> Unit) {
     var address by remember { mutableStateOf(state.server) }
     var error by remember { mutableStateOf<String?>(null) }
+    val ghostPortDescription = when {
+        state.checkingGhostPort -> "Checking GhostPort status…"
+        state.ghostPortError != null -> state.ghostPortError
+        state.ghostPortStatus == null -> "Sign in to check your encrypted tunnel."
+        !state.ghostPortStatus.available -> "GhostPort is not running or its local status socket is unavailable."
+        state.ghostPortStatus.connected -> "Connected · ${state.ghostPortStatus.role ?: "peer"} · ${state.ghostPortStatus.links.size} link(s)"
+        else -> "GhostPort is running, but its peer is disconnected."
+    }
     ModalBottomSheet(onDismissRequest = close) {
         Column(Modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Your connection", style = MaterialTheme.typography.headlineMedium)
@@ -640,6 +651,16 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(onClick = { error = model.configureServer(address); if (error == null) close() }, enabled = !state.busy) { Text("Save server") }
             if (state.error != null) Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider()
+            Text("NETWORK SECURITY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
+            ListItem(
+                headlineContent = { Text("GhostPort tunnel") },
+                supportingContent = { Text(ghostPortDescription) },
+                leadingContent = { Icon(Icons.Outlined.Lock, null) },
+            )
+            OutlinedButton(onClick = model::refreshGhostPort, enabled = state.signedIn && !state.checkingGhostPort, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.checkingGhostPort) "CHECKING…" else "REFRESH TUNNEL STATUS")
+            }
             HorizontalDivider()
             ListItem(
                 headlineContent = { Text("Background uploads") },

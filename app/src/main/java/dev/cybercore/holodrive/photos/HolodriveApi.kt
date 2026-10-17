@@ -83,6 +83,8 @@ data class PhotoEntry(val name: String, val path: String, val folder: Boolean, v
 }
 data class ServerTheme(val id: String, val name: String, val palette: Map<String, String>)
 data class ThemeCatalog(val active: String, val themes: List<ServerTheme>)
+data class GhostPortLinkStatus(val id: String, val mode: String, val activeStreams: Long, val bytesRelayed: Long)
+data class GhostPortStatus(val available: Boolean, val connected: Boolean, val reason: String?, val role: String?, val uptimeSeconds: Long, val links: List<GhostPortLinkStatus>)
 
 class HolodriveApi(
     val server: HttpUrl,
@@ -186,6 +188,27 @@ class HolodriveApi(
             val palette = theme.getJSONObject("palette")
             ServerTheme(theme.getString("id"), theme.getString("name"), palette.keys().asSequence().associateWith { key -> palette.getString(key) })
         })
+    }
+    suspend fun ghostPortStatus(): GhostPortStatus {
+        val result = JSONObject(request("integrations/ghostport/status"))
+        val snapshot = result.optJSONObject("snapshot")
+        val links = snapshot?.optJSONArray("links") ?: JSONArray()
+        return GhostPortStatus(
+            available = result.optBoolean("available"),
+            connected = snapshot?.optBoolean("control_connected") ?: false,
+            reason = result.optString("reason").takeIf(String::isNotBlank),
+            role = snapshot?.optString("role")?.takeIf(String::isNotBlank),
+            uptimeSeconds = snapshot?.optLong("uptime_secs") ?: 0,
+            links = (0 until links.length()).map { index ->
+                val link = links.getJSONObject(index)
+                GhostPortLinkStatus(
+                    id = link.optString("id", "link"),
+                    mode = link.optString("mode"),
+                    activeStreams = link.optLong("active_streams"),
+                    bytesRelayed = link.optLong("bytes_forward") + link.optLong("bytes_back"),
+                )
+            },
+        )
     }
     suspend fun download(path: String, stream: OutputStream) = withContext(Dispatchers.IO) {
         client.newCall(Request.Builder().url(url("raw", path)).build()).execute().use { response ->
