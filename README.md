@@ -22,12 +22,12 @@ Android 11 or newer is required. To update, install a newer signed release over 
 
 1. Open **Configure your server**. Enter an HTTPS Holodrive origin, or a full Tailscale URL such as `http://blackbox.tail9311b5.ts.net:8768`. Include the port your server actually uses. HTTP IP addresses, LAN hostnames, embedded credentials, and path prefixes are rejected.
 2. Connect Tailscale if using a tailnet server. Sign in with the Holodrive password, or create a token on the server's **Devices** page and choose **Device token**. You can also enable background uploads from Settings after password sign-in; the app creates a dedicated device token for this phone.
-3. **Photos** asks you to choose a photo library folder the first time; tap **Use this folder** to remember it on this device. You can switch folders later. **Files** is available independently and browses any configured drive, even before you choose a photo library.
+3. **Photos** asks you to choose photo folders the first time; folders added to **Settings → Manage photo folders** appear together in one gallery. Remove folders there at any time. **Files** is available independently and browses any configured drive.
 4. Open a subfolder as an album. Photos in the current folder are shown newest-modified first. Search filters filenames in that folder; this is not recursive indexing or EXIF capture-date sorting.
 5. Use **Photos** for the selected photo library, or **Files** to browse all configured drives and download any file. In Photos, tap an image, swipe between photos, pinch or double-tap to zoom. **Save original** streams the original to a location selected through Android's document picker.
 6. **Open Holodrive** opens the full server GUI in your browser at the current folder. Browser authentication is separate; passwords and session tokens are never passed in the URL.
 7. Share one or more files from any Android app to **Holodrive Photos**. Choose the destination folder and add them to the upload queue. Uploads run in the background, show progress notifications, resume interrupted chunks, and retry when the network returns.
-8. Select a theme, or follow the server. The theme refreshes on app resume. Low-contrast palette text is adjusted for readability. The included CYBERGRID fallback works when themes are unavailable.
+8. In Settings, choose a compact, medium, or large photo grid; sort by newest, oldest, or name; select the default Photos or Files tab; and save the upload destination. Select a theme or follow the server. The theme refreshes on app resume, low-contrast palette text is adjusted for readability, and the included CYBERGRID fallback works when themes are unavailable.
 
 The gallery still displays folders and raster photos; non-photo files, hidden names, and links escaping the shared root are excluded. Uploads accept files shared by other Android apps. Automatic camera backup, file deletion, video playback, and server administration are not included.
 
