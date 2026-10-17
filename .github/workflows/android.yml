@@ -21,6 +21,8 @@ jobs:
           cache-provider: basic
       - name: Install SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Verify Keysmith wordlist asset
+        run: echo '6d557f0693958fb5e650b68b5bee585eb82cf4da32965505c789e924743bc522  app/src/main/assets/keysmith/eff-large.txt' | sha256sum --check
       - name: Create ephemeral debug signing key
         run: |
           mkdir -p "$HOME/Vaults/android"

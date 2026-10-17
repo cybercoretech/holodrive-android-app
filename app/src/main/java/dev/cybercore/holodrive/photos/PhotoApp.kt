@@ -3,9 +3,15 @@
 package dev.cybercore.holodrive.photos
 
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipDescription
+import android.os.Build
+import android.os.PersistableBundle
 import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.documentfile.provider.DocumentFile
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -58,8 +65,10 @@ fun PhotoApp(
 ) {
     var settings by rememberSaveable { mutableStateOf(false) }
     var section by rememberSaveable(state.defaultTab) { mutableStateOf(state.defaultTab) }
-    var folderManagerOpen by rememberSaveable { mutableStateOf(false) }
+    var folderManagerTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var syncSettingsOpen by rememberSaveable { mutableStateOf(false) }
     var returnToSettingsAfterFolderPick by rememberSaveable { mutableStateOf(false) }
+    var returnToSyncAfterFolderPick by rememberSaveable { mutableStateOf(false) }
     var themePicker by rememberSaveable { mutableStateOf(false) }
     var uploadsOpen by rememberSaveable { mutableStateOf(false) }
     var confirmTokenAccess by rememberSaveable { mutableStateOf(false) }
@@ -72,11 +81,28 @@ fun PhotoApp(
     val filePhotos = remember(state.fileEntries) { state.fileEntries.filter { it.image }.sortedByDescending { it.modified } }
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val chooseLocalSyncFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                val name = DocumentFile.fromTreeUri(context, uri)?.name ?: "Phone folder"
+                returnToSyncAfterFolderPick = true
+                section = "photos"
+                model.addSyncPair(uri, name)
+            } catch (e: Exception) {
+                syncSettingsOpen = true
+                model.reportError(e.message ?: "Android could not grant Holodrive access to that folder.")
+            }
+        } else syncSettingsOpen = true
+    }
     val requestTokenAccess = { confirmTokenAccess = true }
     var rememberPassword by rememberSaveable { mutableStateOf(rememberedPassword) }
     LaunchedEffect(rememberedPassword) { rememberPassword = rememberedPassword }
     LaunchedEffect(Unit) {
         if (rememberedPassword) unlockPassword { password -> model.signIn(password) }
+    }
+    LaunchedEffect(settings, state.signedIn) {
+        if (settings && state.signedIn) { model.refreshGhostPort(); model.refreshCyberVault() }
     }
     LaunchedEffect(state.error, rememberedPassword) {
         if (state.error == "Your session expired. Sign in again." && rememberedPassword) {
@@ -92,10 +118,16 @@ fun PhotoApp(
     LaunchedEffect(state.notice) {
         state.notice?.let { snackbar.showSnackbar(it); model.clearNotice() }
     }
-    LaunchedEffect(state.choosing, returnToSettingsAfterFolderPick) {
-        if (!state.choosing && returnToSettingsAfterFolderPick) {
-            settings = true
-            returnToSettingsAfterFolderPick = false
+    LaunchedEffect(state.choosing, returnToSettingsAfterFolderPick, returnToSyncAfterFolderPick) {
+        if (!state.choosing) {
+            if (returnToSettingsAfterFolderPick) {
+                settings = true
+                returnToSettingsAfterFolderPick = false
+            }
+            if (returnToSyncAfterFolderPick) {
+                syncSettingsOpen = true
+                returnToSyncAfterFolderPick = false
+            }
         }
     }
     LaunchedEffect(state.signedIn, section) {
@@ -169,18 +201,38 @@ fun PhotoApp(
     }
     if (settings) SettingsSheet(model, state, { themePicker = true }, ::openWeb, requestTokenAccess, {
         settings = false
-        folderManagerOpen = true
+        folderManagerTarget = "photos"
+    }, {
+        settings = false
+        folderManagerTarget = "files"
+    }, {
+        settings = false
+        syncSettingsOpen = true
     }) { settings = false }
-    if (folderManagerOpen) ManagePhotoFoldersSheet(
-        folders = state.photoFolders,
-        remove = model::removePhotoFolder,
-        add = {
-            folderManagerOpen = false
-            section = "photos"
-            returnToSettingsAfterFolderPick = true
-            model.chooseFolder()
-        },
-        close = { folderManagerOpen = false },
+    folderManagerTarget?.let { target ->
+        ManageFoldersSheet(
+            title = if (target == "files") "Manage file folders" else "Manage photo folders",
+            description = if (target == "files") "Save folders for quick access from the Files tab." else "Photos from every selected folder appear together in your Photos gallery.",
+            folders = if (target == "files") state.fileFolders else state.photoFolders,
+            remove = if (target == "files") model::removeFileFolder else model::removePhotoFolder,
+            add = {
+                folderManagerTarget = null
+                section = "photos"
+                returnToSettingsAfterFolderPick = true
+                model.chooseFolder(target)
+            },
+            close = { folderManagerTarget = null },
+        )
+    }
+    if (syncSettingsOpen) SyncSettingsDialog(
+        state = state,
+        openLocalFolderPicker = { syncSettingsOpen = false; chooseLocalSyncFolder.launch(null) },
+        remove = model::removeSyncPair,
+        direction = model::setSyncDirection,
+        interval = model::setSyncInterval,
+        wifiOnly = model::setSyncWifiOnly,
+        runNow = model::syncNow,
+        close = { syncSettingsOpen = false },
     )
     if (themePicker) ThemePicker(model, state) { themePicker = false }
     if (state.sharing) AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("Preparing uploads") }, text = { Text(state.shareProgress ?: "Copying shared files…") })
@@ -294,10 +346,16 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
                     Text(if (state.choosing) "MAKE IT YOURS" else "YOUR PRIVATE COLLECTION", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
                     ActionIcon(Icons.Outlined.Refresh, "Refresh photos") { model.browse(state.path) }
                 }
-                Text(if (state.choosing) "Choose a folder" else state.path?.substringAfterLast('/') ?: "Your libraries", style = MaterialTheme.typography.headlineMedium)
+                Text(if (state.choosing) if (state.folderPickTarget == "sync") "Sync destination" else "Choose a folder" else state.path?.substringAfterLast('/') ?: "Your libraries", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(8.dp))
                 val librarySummary = if (state.path == null && state.photoFolders.isNotEmpty()) "${photos.size} photos · ${folders.size} albums · ${state.photoFolders.size} folders combined" else "${photos.size} photos · ${folders.size} albums"
-                Text(if (state.choosing) "Browse your server and add a folder to your combined photo gallery." else librarySummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (state.choosing && state.folderPickTarget == "sync") "Choose the Holodrive destination for this sync pair."
+                    else if (state.choosing) "Browse your server and add a folder to ${if (state.folderPickTarget == "files") "Files" else "Photos"}."
+                    else librarySummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (state.path != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ActionIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Parent folder", model::up)
@@ -305,9 +363,14 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
                     }
                 }
                 if (state.choosing) {
-                    val alreadyAdded = state.path != null && state.path in state.photoFolders
-                    GradientButton(if (alreadyAdded) "FOLDER ALREADY ADDED" else "ADD THIS FOLDER", !state.busy && state.path != null && state.error == null && !alreadyAdded, model::selectFolder)
-                    if (state.photoFolders.isNotEmpty()) TextButton(onClick = model::cancelFolder) { Text("Cancel") }
+                    val savedFolders = if (state.folderPickTarget == "files") state.fileFolders else state.photoFolders
+                    val alreadyAdded = state.path != null && state.path in savedFolders
+                    GradientButton(
+                        if (alreadyAdded) "FOLDER ALREADY ADDED" else "ADD TO ${state.folderPickTarget.uppercase(Locale.ROOT)}",
+                        !state.busy && state.path != null && state.error == null && !alreadyAdded,
+                        model::selectFolder,
+                    )
+                    TextButton(onClick = model::cancelFolder) { Text("Cancel") }
                 } else OutlinedTextField(query, queryChanged, Modifier.fillMaxWidth(), placeholder = { Text("Find in this folder") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true)
             }
         }
@@ -375,15 +438,16 @@ private fun FileBrowser(
     var query by rememberSaveable(state.filePath) { mutableStateOf("") }
     var pendingDownload by remember { mutableStateOf<PhotoEntry?>(null) }
     var details by remember { mutableStateOf<PhotoEntry?>(null) }
+    var shareEntry by remember { mutableStateOf<PhotoEntry?>(null) }
     val saveDocument = rememberLauncherForActivityResult(SavePhotoDocument()) { uri ->
         val entry = pendingDownload
         if (uri != null && entry != null) model.savePhoto(entry, uri)
         pendingDownload = null
     }
-    val entries = remember(state.fileEntries, query) {
+    val entries = remember(state.fileEntries, query, state.fileSortOrder) {
         state.fileEntries.asSequence()
             .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            .sortedWith(compareBy<PhotoEntry> { !it.folder }.thenBy { it.name.lowercase(Locale.ROOT) })
+            .let { sortFileEntries(it.toList(), state.fileSortOrder) }
             .toList()
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 24.dp)) {
@@ -411,6 +475,19 @@ private fun FileBrowser(
             StatusCard(Icons.Outlined.CloudOff, "Files unavailable", error, "Try again") { model.browseFiles(state.filePath) }
         } }
         if (state.filePath == null && !state.fileBusy && state.fileError == null) {
+            if (state.fileFolders.isNotEmpty()) {
+                item { Text("SAVED FOLDERS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
+                items(state.fileFolders, key = { "saved-file-folder/$it" }) { folder ->
+                    ListItem(
+                        headlineContent = { Text(folder.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(folder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Outlined.FolderOpen, null, tint = MaterialTheme.colorScheme.primary) },
+                        trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+                        modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { model.browseFiles(folder) },
+                    )
+                }
+            }
+            item { Text("ALL DRIVES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
             items(state.drives, key = { "file-drive/${it.id}" }) { drive ->
                 ListItem(
                     headlineContent = { Text(drive.name) },
@@ -423,7 +500,22 @@ private fun FileBrowser(
         }
         if (state.filePath != null && !state.fileBusy && state.fileError == null) {
             if (entries.isEmpty()) item { Text(if (query.isBlank()) "This folder is empty." else "No files match that name.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 28.dp)) }
-            items(entries, key = { it.path }) { entry ->
+            if (state.fileLayout == "grid") {
+                val columns = when (state.fileGridSize) { "compact" -> 3; "large" -> 1; else -> 2 }
+                items(entries.chunked(columns), key = { row -> "grid/${row.first().path}" }) { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { entry ->
+                            FileGridTile(
+                                entry = entry,
+                                modifier = Modifier.weight(1f),
+                                open = { openFileEntry(entry, model, openImage) { details = entry } },
+                                download = { pendingDownload = entry; saveDocument.launch(entry) },
+                            )
+                        }
+                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            } else items(entries, key = { it.path }) { entry ->
                 val icon = when { entry.folder -> Icons.Outlined.FolderOpen; entry.image -> Icons.Outlined.Image; else -> Icons.AutoMirrored.Outlined.InsertDriveFile }
                 ListItem(
                     headlineContent = { Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -448,15 +540,125 @@ private fun FileBrowser(
                 Button(onClick = { pendingDownload = entry; details = null; saveDocument.launch(entry) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Outlined.Download, null); Spacer(Modifier.width(8.dp)); Text("SAVE TO DEVICE")
                 }
+                OutlinedButton(onClick = { shareEntry = entry; details = null }, enabled = !model.api.isUsingDeviceToken(), modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Link, null); Spacer(Modifier.width(8.dp)); Text("CREATE SECURE SHARE LINK")
+                }
+                if (model.api.isUsingDeviceToken()) Text("Sign in with your Holodrive password to create share links. Device tokens cannot manage links.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+    shareEntry?.let { entry ->
+        KeysmithShareLinkDialog(
+            model = model,
+            state = state,
+            entry = entry,
+            close = { shareEntry = null; model.clearShareLink() },
+        )
     }
 }
 
 @Composable
-private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, manageFolders: () -> Unit, close: () -> Unit) {
+internal fun KeysmithShareLinkDialog(model: PhotoModel, state: PhotoState, entry: PhotoEntry, close: () -> Unit) {
+    val context = LocalContext.current
+    var wordCount by remember(entry.path) { mutableIntStateOf(6) }
+    var passphrase by remember(entry.path) { mutableStateOf("") }
+    var copied by remember(entry.path) { mutableStateOf(false) }
+    var vaultLabel by remember(entry.path) { mutableStateOf("HOLODRIVE · ${entry.name}") }
+    AlertDialog(
+        onDismissRequest = { if (!state.creatingShareLink) close() },
+        title = { Text(if (state.shareLink == null) "Create a protected link" else "Share link ready") },
+        text = {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (state.shareLink == null) {
+                    Text("Keysmith creates this passphrase locally with the EFF Large Wordlist. Holodrive receives it only when the password-protected link is created.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SettingChoiceRow("Passphrase length", wordCount.toString(), listOf("4" to "4 words", "6" to "6 words", "8" to "8 words", "10" to "10 words")) { wordCount = it.toInt() }
+                    OutlinedButton(onClick = {
+                        try { passphrase = KeysmithPassphrase.generate(context, wordCount); copied = false }
+                        catch (e: Exception) { model.reportError(e.message ?: "Keysmith could not generate a passphrase.") }
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Key, null); Spacer(Modifier.width(8.dp)); Text(if (passphrase.isBlank()) "GENERATE WITH KEYSMITH" else "GENERATE ANOTHER")
+                    }
+                    if (passphrase.isNotBlank()) {
+                        SelectionContainer { Text(passphrase, style = MaterialTheme.typography.titleMedium) }
+                        TextButton(onClick = { copySensitiveText(context, "Holodrive share passphrase", passphrase); copied = true }) {
+                            Text(if (copied) "COPIED — SHARE IT SEPARATELY" else "COPY PASSPHRASE")
+                        }
+                    }
+                    if (!state.error.isNullOrBlank()) Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text("${entry.name} is protected by the passphrase shown below. Send the link and passphrase through separate channels.", style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer { Text(state.shareLink, style = MaterialTheme.typography.bodySmall) }
+                    SelectionContainer { Text(passphrase, style = MaterialTheme.typography.titleMedium) }
+                    Text("The link expires in 7 days. Holodrive stores only a password hash.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { copySensitiveText(context, "Holodrive share link", state.shareLink); copied = true }) { Text(if (copied) "LINK COPIED" else "COPY LINK") }
+                    OutlinedTextField(vaultLabel, { vaultLabel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("CyberVault entry label") }, singleLine = true)
+                    OutlinedButton(
+                        onClick = { model.saveShareToCyberVault(vaultLabel.trim(), state.shareLink, passphrase) },
+                        enabled = vaultLabel.isNotBlank() && !state.savingCyberVault && !model.api.isUsingDeviceToken(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(if (state.savingCyberVault) "SAVING TO CYBERVAULT…" else "SAVE LINK + PASSPHRASE TO CYBERVAULT") }
+                    state.cyberVaultNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("Saved")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
+                    if (model.api.isUsingDeviceToken()) Text("Password sign-in is required; device tokens cannot store secrets.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            if (state.shareLink == null) Button(onClick = { copied = false; model.createShareLink(entry.path, passphrase) }, enabled = passphrase.length >= 12 && !state.creatingShareLink) {
+                Text(if (state.creatingShareLink) "CREATING…" else "CREATE LINK")
+            } else TextButton(onClick = close) { Text("DONE") }
+        },
+        dismissButton = { if (state.shareLink == null) TextButton(onClick = close, enabled = !state.creatingShareLink) { Text("CANCEL") } },
+    )
+}
+
+private fun copySensitiveText(context: android.content.Context, label: String, value: String) {
+    val clip = ClipData.newPlainText(label, value)
+    if (Build.VERSION.SDK_INT >= 33) {
+        clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+    }
+    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+}
+
+@Composable
+private fun FileGridTile(entry: PhotoEntry, modifier: Modifier, open: () -> Unit, download: () -> Unit) {
+    Card(modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(onClick = open), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .7f))) {
+        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val icon = when { entry.folder -> Icons.Outlined.FolderOpen; entry.image -> Icons.Outlined.Image; else -> Icons.AutoMirrored.Outlined.InsertDriveFile }
+                Icon(icon, null, tint = if (entry.folder) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.weight(1f))
+                if (!entry.folder) IconButton(onClick = download, modifier = Modifier.size(32.dp)) { Icon(Icons.Outlined.Download, "Save ${entry.name}", modifier = Modifier.size(18.dp)) }
+            }
+            Text(entry.name, style = MaterialTheme.typography.labelMedium, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
+            if (!entry.folder) Text(android.text.format.Formatter.formatFileSize(LocalContext.current, entry.size), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+    }
+}
+
+private fun openFileEntry(entry: PhotoEntry, model: PhotoModel, openImage: (PhotoEntry) -> Unit, showDetails: () -> Unit) {
+    when { entry.folder -> model.browseFiles(entry.path); entry.image -> openImage(entry); else -> showDetails() }
+}
+
+@Composable
+private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Unit, web: () -> Unit, enableUploads: () -> Unit, managePhotoFolders: () -> Unit, manageFileFolders: () -> Unit, manageSync: () -> Unit, close: () -> Unit) {
     var address by remember { mutableStateOf(state.server) }
     var error by remember { mutableStateOf<String?>(null) }
+    val ghostPortDescription = when {
+        state.checkingGhostPort -> "Checking GhostPort status…"
+        state.ghostPortError != null -> state.ghostPortError
+        state.ghostPortStatus == null -> "Sign in to check your encrypted tunnel."
+        !state.ghostPortStatus.available -> "GhostPort is not running or its local status socket is unavailable."
+        state.ghostPortStatus.connected -> "Connected · ${state.ghostPortStatus.role ?: "peer"} · ${state.ghostPortStatus.links.size} link(s)"
+        else -> "GhostPort is running, but its peer is disconnected."
+    }
+    val cyberVaultDescription = when {
+        state.checkingCyberVault -> "Checking CyberVault bridge…"
+        state.cyberVaultStatusError != null -> state.cyberVaultStatusError
+        state.cyberVaultStatus == null -> "Sign in to check the local encrypted vault."
+        !state.cyberVaultStatus.available -> "CyberVault bridge is stopped. Run cybervault bridge on the server."
+        state.cyberVaultStatus.unlocked -> "Unlocked and ready to store share links."
+        else -> "CyberVault bridge is available but locked."
+    }
     ModalBottomSheet(onDismissRequest = close) {
         Column(Modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Your connection", style = MaterialTheme.typography.headlineMedium)
@@ -466,6 +668,24 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(onClick = { error = model.configureServer(address); if (error == null) close() }, enabled = !state.busy) { Text("Save server") }
             if (state.error != null) Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider()
+            Text("NETWORK SECURITY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
+            ListItem(
+                headlineContent = { Text("GhostPort tunnel") },
+                supportingContent = { Text(ghostPortDescription) },
+                leadingContent = { Icon(Icons.Outlined.Lock, null) },
+            )
+            OutlinedButton(onClick = model::refreshGhostPort, enabled = state.signedIn && !state.checkingGhostPort, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.checkingGhostPort) "CHECKING…" else "REFRESH TUNNEL STATUS")
+            }
+            ListItem(
+                headlineContent = { Text("CyberVault") },
+                supportingContent = { Text(cyberVaultDescription) },
+                leadingContent = { Icon(Icons.Outlined.Key, null) },
+            )
+            OutlinedButton(onClick = model::refreshCyberVault, enabled = state.signedIn && !state.checkingCyberVault, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.checkingCyberVault) "CHECKING…" else "REFRESH CYBERVAULT STATUS")
+            }
             HorizontalDivider()
             ListItem(
                 headlineContent = { Text("Background uploads") },
@@ -477,15 +697,42 @@ private fun SettingsSheet(model: PhotoModel, state: PhotoState, themes: () -> Un
                     Text(if (state.creatingDeviceToken) "ENABLING…" else if (model.api.isUsingDeviceToken()) "SAVE THIS DEVICE TOKEN" else "ENABLE BACKGROUND UPLOADS")
                 }
             }
+            if (state.signedIn && !state.hasDeviceToken && !state.hasReadOnlySyncToken) {
+                OutlinedButton(onClick = model::enableReadOnlySync, enabled = !state.creatingDeviceToken, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (state.creatingDeviceToken) "ENABLING…" else "ENABLE READ-ONLY SYNC")
+                }
+            }
             HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Manage photo folders") },
-                supportingContent = { Text(if (state.photoFolders.isEmpty()) "Choose server folders to combine in Photos" else "${state.photoFolders.size} folders combined in Photos") },
-                leadingContent = { Icon(Icons.Outlined.FolderOpen, null) },
-                modifier = Modifier.clickable(enabled = state.signedIn) { manageFolders() },
-            )
+            Text("SYNC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
+            OutlinedButton(onClick = manageSync, enabled = state.signedIn, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Sync, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Manage folder sync · ${state.syncPairs.size}")
+            }
+            Text("Pair a phone folder with a Holodrive folder, then select upload, download, or two-way behavior for each pair.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            Text("PHOTOS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
+            OutlinedButton(onClick = managePhotoFolders, enabled = state.signedIn, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.CreateNewFolder, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Manage photo folders · ${state.photoFolders.size}")
+            }
             SettingChoiceRow("Photo grid size", state.gridSize, listOf("compact" to "Small", "medium" to "Medium", "large" to "Large"), model::setGridSize)
             SettingChoiceRow("Sort photos by", state.sortOrder, listOf("newest" to "Newest", "oldest" to "Oldest", "name" to "Name"), model::setSortOrder)
+            HorizontalDivider()
+            Text("FILES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
+            OutlinedButton(onClick = manageFileFolders, enabled = state.signedIn, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.CreateNewFolder, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Manage file folders · ${state.fileFolders.size}")
+            }
+            SettingChoiceRow("File view", state.fileLayout, listOf("list" to "List", "grid" to "Grid"), model::setFileLayout)
+            if (state.fileLayout == "grid") {
+                SettingChoiceRow("File grid size", state.fileGridSize, listOf("compact" to "Small", "medium" to "Medium", "large" to "Large"), model::setFileGridSize)
+            }
+            SettingChoiceRow("Sort files by", state.fileSortOrder, listOf("name" to "Name", "newest" to "Newest", "oldest" to "Oldest", "type" to "Type"), model::setFileSortOrder)
+            HorizontalDivider()
+            Text("GENERAL", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, letterSpacing = 1.sp)
             SettingChoiceRow("Default tab", state.defaultTab, listOf("photos" to "Photos", "files" to "Files"), model::setDefaultTab)
             OutlinedTextField(
                 value = state.uploadDirectory,
@@ -526,17 +773,72 @@ private fun SettingChoiceRow(title: String, selected: String, options: List<Pair
 }
 
 @Composable
-private fun ManagePhotoFoldersSheet(folders: List<String>, remove: (String) -> Unit, add: () -> Unit, close: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = close) {
-        Column(
-            Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("Manage photo folders", style = MaterialTheme.typography.headlineMedium)
-            Text("Photos from every selected folder appear together in your Photos gallery.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (folders.isEmpty()) {
-                Text("No photo folders added yet. Add a server folder to start your combined gallery.", style = MaterialTheme.typography.bodyMedium)
-            } else {
+private fun SyncSettingsDialog(
+    state: PhotoState,
+    openLocalFolderPicker: () -> Unit,
+    remove: (String) -> Unit,
+    direction: (String, String) -> Unit,
+    interval: (String) -> Unit,
+    wifiOnly: (Boolean) -> Unit,
+    runNow: (String) -> Unit,
+    close: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Folder sync") },
+        text = {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Pair a folder on this phone with a Holodrive folder. Each pair can upload, download, or sync both ways.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!state.hasDeviceToken && !state.hasReadOnlySyncToken) Text("Enable read-only sync for downloads, or background uploads for upload/two-way sync. Tokens are encrypted with Android Keystore.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                if (state.syncPairs.isEmpty()) Text("No sync pairs yet. Choose a phone folder, then choose its destination on Holodrive.")
+                state.syncPairs.forEach { pair ->
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f))) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(pair.localName, style = MaterialTheme.typography.titleSmall)
+                            Text("↔ ${pair.remotePath}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            SettingChoiceRow(
+                                "Sync direction",
+                                pair.direction,
+                                listOf("upload" to "Phone → server", "two-way" to "Two-way", "download" to "Server → phone"),
+                            ) { direction(pair.id, it) }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                val canRun = if (pair.direction == "download") state.hasReadOnlySyncToken || state.hasDeviceToken else state.hasDeviceToken
+                                TextButton(onClick = { runNow(pair.id) }, enabled = canRun) { Text("SYNC NOW") }
+                                TextButton(onClick = { remove(pair.id) }) { Text("REMOVE PAIR") }
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider()
+                SettingChoiceRow("Automatic sync", state.syncInterval, listOf("15m" to "15 min", "hourly" to "1 hour", "6h" to "6 hours", "daily" to "Daily"), interval)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Wi-Fi only", style = MaterialTheme.typography.labelLarge)
+                        Text("When off, sync can use mobile data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = state.syncWifiOnly, onCheckedChange = wifiOnly)
+                }
+                Text("A read-only token can only download; phone → server and two-way sync need a writable token. Two-way conflicts use the newer modified time; ties keep the phone copy. Sync never propagates deletions. Downloaded files replace same-name local files only after the download completes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            Button(onClick = openLocalFolderPicker, enabled = state.signedIn && (state.hasDeviceToken || state.hasReadOnlySyncToken)) {
+                Icon(Icons.Outlined.CreateNewFolder, null); Text("  ADD SYNC PAIR")
+            }
+        },
+        dismissButton = { TextButton(onClick = close) { Text("DONE") } },
+    )
+}
+
+@Composable
+private fun ManageFoldersSheet(title: String, description: String, folders: List<String>, remove: (String) -> Unit, add: () -> Unit, close: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (folders.isEmpty()) Text("No folders saved yet. Browse your Holodrive server and choose a folder.")
                 folders.forEach { folder ->
                     ListItem(
                         headlineContent = { Text(folder.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -546,13 +848,10 @@ private fun ManagePhotoFoldersSheet(folders: List<String>, remove: (String) -> U
                     )
                 }
             }
-            Button(onClick = add, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.CreateNewFolder, null)
-                Text("  ADD FOLDER")
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-    }
+        },
+        confirmButton = { Button(onClick = add) { Icon(Icons.Outlined.CreateNewFolder, null); Text("  BROWSE SERVER") } },
+        dismissButton = { TextButton(onClick = close) { Text("DONE") } },
+    )
 }
 
 @Composable

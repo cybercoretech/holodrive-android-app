@@ -19,7 +19,7 @@ identity in the original handoff below:
   resumable background uploads using the server's existing device-token and
   upload APIs. Broad file management and server administration remain out of
   scope for this milestone. The private repository is
-  `https://github.com/cybercore-tech/holodrive`; release signing uses the
+  `https://github.com/cybercoretech/holodrive`; release signing uses the
   dedicated key in `~/Vaults/android/holodrive-photos-release.jks`. The local
   branch is `feat/photo-gallery`.
 - In Android Studio, the ordinary `debug` build uses real-server networking and
@@ -78,7 +78,7 @@ editor, and any server administration beyond what's listed.
 |---|---|
 | This app (to create) | `~/Devspace/Android/Holodrive/` (one Git repo per app; see `~/Devspace/Android/README.md`) |
 | Reference Android app (same stack, same conventions) | `~/Devspace/Android/CybercoreContinuity/` |
-| Holodrive server source | `~/Devspace/Cybercore/core/holodrive` → github.com/cybercore-tech/holodrive |
+| Holodrive server source | `~/Devspace/Cybercore/core/holodrive` → github.com/cybercoretech/holodrive |
 | Server API code | `src/web.rs` (routes and guard), `src/fsops.rs` (paths and file ops), `src/snapshots.rs`, `src/samba.rs` |
 | Web UI (behaviour reference) | `static/app.js`, `static/ui.css`, `static/index.html` |
 | Running server | user service `holodrive.service`, `127.0.0.1:8768`, published by `tailscale serve --http=8768` |

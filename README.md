@@ -1,35 +1,41 @@
 # 📸 Holodrive Photos
 
-A native Android client for [Holodrive](https://github.com/cybercore-tech/holodrive), with separate Photos and Files navigation, device-token sign-in, and resumable background uploads from Android's share sheet.
+A native Android client for [Holodrive](https://github.com/cybercoretech/holodrive), with separate Photos and Files navigation, device-token sign-in, and resumable background uploads from Android's share sheet.
 
 **Application ID:** `dev.cybercore.holodrive.photos` (debug: `.debug`). Android 11+, Kotlin / Jetpack Compose / Material 3. This is an early release build and is not published through an app store.
 
 ## 📲 Install Holodrive Photos
 
-**[GitHub Releases](https://github.com/cybercore-tech/holodrive-android-app/releases)** · [Install with Obtainium](https://github.com/cybercore-tech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercore-tech.github.io/holodrive-android-app/)
+**[GitHub Releases](https://github.com/cybercoretech/holodrive-android-app/releases)** · [Install with Obtainium](https://github.com/cybercoretech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercoretech.github.io/holodrive-android-app/)
 
 The first signed APK release is being prepared. After `v0.1.0` is published, the stable latest-release download URLs below will be active.
 
 ```sh
-curl -fL -o holodrive-photos.apk https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
-curl -fL -o holodrive-photos.apk.sha256 https://github.com/cybercore-tech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
+curl -fL -o holodrive-photos.apk https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
+curl -fL -o holodrive-photos.apk.sha256 https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
 sha256sum --check holodrive-photos.apk.sha256
 ```
 
-Android 11 or newer is required. To update, install a newer signed release over the existing app; Android verifies that updates use the same signing key. For automatic update checks, install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add app**, and enter `https://github.com/cybercore-tech/holodrive-android-app`.
+Android 11 or newer is required. To update, install a newer signed release over the existing app; Android verifies that updates use the same signing key. For automatic update checks, install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add app**, and enter `https://github.com/cybercoretech/holodrive-android-app`.
 
 ## 🚀 Using the app
 
 1. Open **Configure your server**. Enter an HTTPS Holodrive origin, or a full Tailscale URL such as `http://blackbox.tail9311b5.ts.net:8768`. Include the port your server actually uses. HTTP IP addresses, LAN hostnames, embedded credentials, and path prefixes are rejected.
 2. Connect Tailscale if using a tailnet server. Sign in with the Holodrive password, or create a token on the server's **Devices** page and choose **Device token**. You can also enable background uploads from Settings after password sign-in; the app creates a dedicated device token for this phone.
-3. **Photos** asks you to choose photo folders the first time; folders added to **Settings → Manage photo folders** appear together in one gallery. Remove folders there at any time. **Files** is available independently and browses any configured drive.
+3. **Photos** asks you to choose photo folders the first time; folders added to **Settings → Manage photo folders** appear together in one gallery. Remove folders there at any time. **Files** browses every configured drive; save frequently used server folders from **Settings → Manage file folders** for quick access at the Files root.
 4. Open a subfolder as an album. Photos in the current folder are shown newest-modified first. Search filters filenames in that folder; this is not recursive indexing or EXIF capture-date sorting.
 5. Use **Photos** for the selected photo library, or **Files** to browse all configured drives and download any file. In Photos, tap an image, swipe between photos, pinch or double-tap to zoom. **Save original** streams the original to a location selected through Android's document picker.
 6. **Open Holodrive** opens the full server GUI in your browser at the current folder. Browser authentication is separate; passwords and session tokens are never passed in the URL.
 7. Share one or more files from any Android app to **Holodrive Photos**. Choose the destination folder and add them to the upload queue. Uploads run in the background, show progress notifications, resume interrupted chunks, and retry when the network returns.
-8. In Settings, choose a compact, medium, or large photo grid; sort by newest, oldest, or name; select the default Photos or Files tab; and save the upload destination. Select a theme or follow the server. The theme refreshes on app resume, low-contrast palette text is adjusted for readability, and the included CYBERGRID fallback works when themes are unavailable.
+8. In Settings, pair an Android folder with a Holodrive folder and choose **Phone → server**, **Two-way**, or **Server → phone** for each pair. Set automatic sync to every 15 minutes, hourly, every 6 hours, or daily; choose Wi-Fi-only; or run a pair manually. Background sync requires an encrypted device token and the Android folder permission. Two-way sync favors the newer modified time (phone wins ties); it never propagates deletions. Choose photo and file layouts and grid sizes, sort each view, select the default Photos or Files tab, and save the upload destination. Select a theme or follow the server.
 
-The gallery still displays folders and raster photos; non-photo files, hidden names, and links escaping the shared root are excluded. Uploads accept files shared by other Android apps. Automatic camera backup, file deletion, video playback, and server administration are not included.
+The gallery still displays folders and raster photos; non-photo files, hidden names, and links escaping the shared root are excluded. Uploads accept files shared by other Android apps. Sync copies files and folders but does not propagate deletions; background sync cadence is managed by Android and may be delayed by battery/network policy. Video playback and server administration are not included.
+
+From a photo viewer or a file's details sheet, create a password-protected share link. Choose **Generate with Keysmith** to make a passphrase locally, then share the link and passphrase separately. Link creation requires password sign-in; device tokens cannot manage links.
+
+**Settings → Network security** shows the live GhostPort control-channel and link status from the authenticated, read-only HOLODRIVE API. The phone never receives GhostPort private keys or peer addresses.
+
+After creating a protected share, choose **Save link + passphrase to CyberVault** to append the bundle to your unlocked CyberVault on the HOLODRIVE server. Start `cybervault bridge` in a local server terminal first. This requires password sign-in; device-token sessions are not allowed to store secrets. CyberVault refuses duplicate labels rather than replacing an existing secret.
 
 ## 🛡️ Security and privacy
 
@@ -39,6 +45,7 @@ The gallery still displays folders and raster photos; non-photo files, hidden na
 - The configured server must retain its Host allowlist, password protection, CSRF checks, and login throttle. The app uses session cookies for password sign-in and Bearer authentication for device tokens. It never retries password submissions automatically.
 - Passwords are never stored unless **Remember on this device** is checked; they use AES-GCM with an Android Keystore key requiring fingerprint confirmation. A device token is stored only when requested, encrypted with a device-bound Android Keystore key so WorkManager can resume uploads without an interactive prompt. The server currently grants writable tokens access to every writable drive; the app explains this before enabling background uploads. Tokens can be revoked from the server's **Devices** page. Sign-out erases local credentials and cancels queued uploads.
 - Shared files are copied into private app storage before they are queued, so temporary Android share permissions do not expire during background work. Staged files remain on device until their upload succeeds or the share is dismissed.
+- Keysmith passphrases are generated on-device from the pinned EFF Large Wordlist with Android's `SecureRandom`; the app does not call a generator service. The passphrase is sent to Holodrive only to create its password-protected link, where the server hashes it. Link URLs are bearer capabilities; copied links and passphrases are marked sensitive in Android's clipboard metadata and should be sent through separate channels.
 - Preferences store the server address, selected virtual folder, and theme. Android cloud backup/device transfer are disabled. Production builds block screenshots and recent-task previews via `FLAG_SECURE`.
 - No analytics, ads, telemetry, contacts, camera, or broad storage permissions. Explicitly saved photos are normal files at the destination chosen by the user, outside the app's session protection.
 
@@ -89,12 +96,12 @@ The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopb
 ## 🔄 Automatic updates with Obtainium
 
 1. Install Obtainium from its [official GitHub releases](https://github.com/ImranR98/Obtainium/releases/latest).
-2. Tap **Add app** and paste `https://github.com/cybercore-tech/holodrive-android-app`.
+2. Tap **Add app** and paste `https://github.com/cybercoretech/holodrive-android-app`.
 3. Confirm the detected package is `dev.cybercore.holodrive.photos` and save. Obtainium checks GitHub Releases for updates; Android asks before installing each update.
 
 ## 📦 Release preparation
 
-The Android source repository is `https://github.com/cybercore-tech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercore-tech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
+The Android source repository is `https://github.com/cybercoretech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercoretech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
 Before a release is tagged, hosted CI must build and test the release variant and the release signing secrets must be configured in the repository. The app source is licensed under [Apache-2.0](LICENSE); bundled JetBrains Mono Nerd font files remain under their separate [OFL](docs/JetBrainsMono-OFL.txt).
 

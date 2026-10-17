@@ -83,6 +83,9 @@ data class PhotoEntry(val name: String, val path: String, val folder: Boolean, v
 }
 data class ServerTheme(val id: String, val name: String, val palette: Map<String, String>)
 data class ThemeCatalog(val active: String, val themes: List<ServerTheme>)
+data class GhostPortLinkStatus(val id: String, val mode: String, val activeStreams: Long, val bytesRelayed: Long)
+data class GhostPortStatus(val available: Boolean, val connected: Boolean, val reason: String?, val role: String?, val uptimeSeconds: Long, val links: List<GhostPortLinkStatus>)
+data class CyberVaultStatus(val available: Boolean, val unlocked: Boolean, val reason: String?)
 
 class HolodriveApi(
     val server: HttpUrl,
@@ -144,9 +147,22 @@ class HolodriveApi(
         try { roots() } catch (e: Exception) { deviceToken = null; throw e }
     }
 
-    suspend fun createDeviceToken(name: String): String {
-        val result = JSONObject(request("tokens", body = JSONObject().put("name", name).put("read_only", false)))
+    suspend fun createDeviceToken(name: String, readOnly: Boolean = false): String {
+        val result = JSONObject(request("tokens", body = JSONObject().put("name", name).put("read_only", readOnly)))
         return result.getString("token")
+    }
+
+    suspend fun createShareLink(path: String, password: String, days: Int = 7): String {
+        require(password.length in 12..256) { "Use a passphrase between 12 and 256 characters." }
+        require(days in 1..365) { "Share-link expiry must be between 1 and 365 days." }
+        val result = JSONObject(request("links", body = JSONObject()
+            .put("path", path)
+            .put("mode", "view")
+            .put("days", days)
+            .put("password", password)
+        ))
+        val key = result.getString("key")
+        return server.newBuilder().addPathSegment("s").addPathSegment(key).build().toString()
     }
 
     suspend fun logout() { try { request("logout", body = JSONObject()) } finally { clearSession() } }
@@ -173,6 +189,42 @@ class HolodriveApi(
             val palette = theme.getJSONObject("palette")
             ServerTheme(theme.getString("id"), theme.getString("name"), palette.keys().asSequence().associateWith { key -> palette.getString(key) })
         })
+    }
+    suspend fun ghostPortStatus(): GhostPortStatus {
+        val result = JSONObject(request("integrations/ghostport/status"))
+        val snapshot = result.optJSONObject("snapshot")
+        val links = snapshot?.optJSONArray("links") ?: JSONArray()
+        return GhostPortStatus(
+            available = result.optBoolean("available"),
+            connected = snapshot?.optBoolean("control_connected") ?: false,
+            reason = result.optString("reason").takeIf(String::isNotBlank),
+            role = snapshot?.optString("role")?.takeIf(String::isNotBlank),
+            uptimeSeconds = snapshot?.optLong("uptime_secs") ?: 0,
+            links = (0 until links.length()).map { index ->
+                val link = links.getJSONObject(index)
+                GhostPortLinkStatus(
+                    id = link.optString("id", "link"),
+                    mode = link.optString("mode"),
+                    activeStreams = link.optLong("active_streams"),
+                    bytesRelayed = link.optLong("bytes_forward") + link.optLong("bytes_back"),
+                )
+            },
+        )
+    }
+    suspend fun cyberVaultStatus(): CyberVaultStatus {
+        val result = JSONObject(request("integrations/cybervault/status"))
+        return CyberVaultStatus(result.optBoolean("available"), result.optBoolean("unlocked"), result.optString("reason").takeIf(String::isNotBlank))
+    }
+    suspend fun saveShareToCyberVault(label: String, link: String, passphrase: String): String {
+        check(!isUsingDeviceToken()) { "Sign in with your Holodrive password to save secrets to CyberVault." }
+        val secret = "Link: $link\nPassphrase: $passphrase"
+        val result = JSONObject(request("integrations/cybervault/store", body = JSONObject()
+            .put("label", label)
+            .put("secret", secret)))
+        if (!result.optBoolean("stored")) {
+            throw IOException("CyberVault did not store this share (${result.optString("reason", "bridge unavailable")}).")
+        }
+        return result.optString("label", label)
     }
     suspend fun download(path: String, stream: OutputStream) = withContext(Dispatchers.IO) {
         client.newCall(Request.Builder().url(url("raw", path)).build()).execute().use { response ->

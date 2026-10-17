@@ -101,6 +101,59 @@ class HolodriveApiTest {
         }
     }
 
+    @Test fun ghostPortStatusUsesTheAuthenticatedReadOnlyEndpoint() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Set-Cookie", "holodrive_session=test-session; HttpOnly; Path=/; Max-Age=3600").setBody("{\"csrf\":\"test-csrf\"}"))
+            server.enqueue(MockResponse().setBody("""{"api_version":"status/v1","available":true,"snapshot":{"role":"client","control_connected":true,"uptime_secs":3600,"control_peer_addr":"192.0.2.10:9000","links":[{"id":"holodrive","mode":"reverse","active_streams":2,"bytes_forward":100,"bytes_back":200}]}}"""))
+            val api = HolodriveApi(server.url("/"), Dns.SYSTEM)
+            api.login("test-only-password")
+            server.takeRequest() // login exchange
+            val status = api.ghostPortStatus()
+            val request = server.takeRequest()
+            assertEquals("/api/integrations/ghostport/status", request.requestUrl!!.encodedPath)
+            assertEquals("holodrive_session=test-session", request.getHeader("Cookie"))
+            assertTrue(status.available)
+            assertTrue(status.connected)
+            assertEquals("client", status.role)
+            assertEquals(1, status.links.size)
+            assertEquals(300, status.links.single().bytesRelayed)
+            api.close()
+        }
+    }
+
+    @Test fun cyberVaultStoreUsesPasswordSessionAndSendsTheShareBundle() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Set-Cookie", "holodrive_session=test-session; HttpOnly; Path=/; Max-Age=3600").setBody("{\"csrf\":\"test-csrf\"}"))
+            server.enqueue(MockResponse().setBody("{\"api_version\":\"store/v1\",\"stored\":true,\"label\":\"HOLODRIVE · album\"}"))
+            val api = HolodriveApi(server.url("/"), Dns.SYSTEM)
+            api.login("test-only-password")
+            server.takeRequest()
+            assertEquals("HOLODRIVE · album", api.saveShareToCyberVault("HOLODRIVE · album", "https://example.test/s/abc", "amber moon river"))
+            val request = server.takeRequest()
+            assertEquals("/api/integrations/cybervault/store", request.requestUrl!!.encodedPath)
+            assertEquals("test-csrf", request.getHeader("X-Holodrive-Csrf"))
+            val payload = JSONObject(request.body.readUtf8())
+            assertEquals("HOLODRIVE · album", payload.getString("label"))
+            assertEquals("Link: https://example.test/s/abc\nPassphrase: amber moon river", payload.getString("secret"))
+            api.close()
+        }
+    }
+
+    @Test fun cyberVaultStatusUsesTheAuthenticatedStatusEndpoint() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Set-Cookie", "holodrive_session=test-session; HttpOnly; Path=/; Max-Age=3600").setBody("{\"csrf\":\"test-csrf\"}"))
+            server.enqueue(MockResponse().setBody("{\"api_version\":\"status/v1\",\"available\":true,\"unlocked\":true}"))
+            val api = HolodriveApi(server.url("/"), Dns.SYSTEM)
+            api.login("test-only-password")
+            server.takeRequest()
+            val status = api.cyberVaultStatus()
+            assertEquals("/api/integrations/cybervault/status", server.takeRequest().requestUrl!!.encodedPath)
+            assertTrue(status.available)
+            assertTrue(status.unlocked)
+            api.close()
+        }
+    }
+
     @Test fun listingRetainsFilesButMarksOnlySafeRasterImagesAsPhotos() {
         fun entry(name: String, mime: String = "image/jpeg", escapes: Boolean = false, kind: String = "file") =
             PhotoEntry.fromJson("pictures", JSONObject().put("name", name).put("mime", mime).put("kind", kind).put("escapes", escapes))

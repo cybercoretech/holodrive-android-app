@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.io.File
 import java.util.UUID
@@ -31,7 +33,9 @@ data class PhotoState(
     val notice: String? = null,
     val path: String? = null,
     val photoFolders: List<String> = emptyList(),
+    val fileFolders: List<String> = emptyList(),
     val choosing: Boolean = false,
+    val folderPickTarget: String = "photos",
     val drives: List<Drive> = emptyList(),
     val entries: List<PhotoEntry> = emptyList(),
     val filePath: String? = null,
@@ -39,21 +43,39 @@ data class PhotoState(
     val fileBusy: Boolean = false,
     val fileError: String? = null,
     val catalog: ThemeCatalog = ThemeCatalog("", emptyList()),
+    val ghostPortStatus: GhostPortStatus? = null,
+    val ghostPortError: String? = null,
+    val checkingGhostPort: Boolean = false,
+    val cyberVaultStatus: CyberVaultStatus? = null,
+    val cyberVaultStatusError: String? = null,
+    val checkingCyberVault: Boolean = false,
     val themeChoice: String? = null,
     val gridSize: String = "medium",
     val sortOrder: String = "newest",
+    val fileGridSize: String = "medium",
+    val fileSortOrder: String = "name",
+    val fileLayout: String = "list",
     val defaultTab: String = "photos",
+    val syncPairs: List<SyncPair> = emptyList(),
+    val syncInterval: String = "hourly",
+    val syncWifiOnly: Boolean = true,
     val blockedUntil: Long = 0,
     val hasDeviceToken: Boolean = false,
+    val hasReadOnlySyncToken: Boolean = false,
     val creatingDeviceToken: Boolean = false,
     val sharedFiles: List<ShareFile> = emptyList(),
     val sharing: Boolean = false,
     val shareProgress: String? = null,
+    val creatingShareLink: Boolean = false,
+    val shareLink: String? = null,
+    val savingCyberVault: Boolean = false,
+    val cyberVaultNotice: String? = null,
     val uploadDirectory: String = "shared/from-phone",
     val uploads: List<UploadItem> = emptyList(),
 )
 
 data class ShareFile(val file: File, val name: String, val size: Long)
+data class SyncPair(val id: String, val localTree: String, val localName: String, val remotePath: String, val direction: String = "upload")
 
 class PhotoModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("preferences", 0)
@@ -61,11 +83,19 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     private val mutable = MutableStateFlow(PhotoState(
         server = prefs.getString("server", DEFAULT_SERVER) ?: DEFAULT_SERVER,
         photoFolders = initialPhotoFolders,
+        fileFolders = loadFolderSet("file_folders"),
         themeChoice = prefs.getString("theme", null),
         gridSize = prefs.getString("grid_size", "medium") ?: "medium",
         sortOrder = prefs.getString("sort_order", "newest") ?: "newest",
+        fileGridSize = prefs.getString("file_grid_size", "medium") ?: "medium",
+        fileSortOrder = prefs.getString("file_sort_order", "name") ?: "name",
+        fileLayout = prefs.getString("file_layout", "list") ?: "list",
         defaultTab = prefs.getString("default_tab", "photos") ?: "photos",
+        syncPairs = loadSyncPairs(),
+        syncInterval = prefs.getString("sync_interval", "hourly") ?: "hourly",
+        syncWifiOnly = prefs.getBoolean("sync_wifi_only", true),
         hasDeviceToken = DeviceTokenVault(application).hasToken(),
+        hasReadOnlySyncToken = DeviceTokenVault(application, readOnly = true).hasToken(),
         uploadDirectory = prefs.getString("upload_directory", "shared/from-phone") ?: "shared/from-phone",
     ))
     val state = mutable.asStateFlow()
@@ -73,6 +103,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     private var browseJob: Job? = null
     private var filesJob: Job? = null
     private var activeDeviceToken: String? = null
+    private var activeDeviceTokenReadOnly = false
 
     private fun loadPhotoFolders(): List<String> {
         prefs.getStringSet("photo_folders", null)?.let { saved ->
@@ -83,6 +114,29 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         return listOfNotNull(legacy)
     }
 
+    private fun loadFolderSet(key: String): List<String> =
+        prefs.getStringSet(key, null)?.filter(String::isNotBlank)?.distinct()?.sorted().orEmpty()
+
+    private fun loadSyncPairs(): List<SyncPair> = try {
+        val saved = JSONArray(prefs.getString("sync_pairs", "[]"))
+        (0 until saved.length()).map { saved.getJSONObject(it) }.map { row ->
+            SyncPair(row.getString("id"), row.getString("localTree"), row.getString("localName"), row.getString("remotePath"), row.optString("direction", "upload"))
+        }
+    } catch (_: Exception) { emptyList() }
+
+    private fun saveSyncPairs(pairs: List<SyncPair>) {
+        val rows = JSONArray()
+        pairs.forEach { pair -> rows.put(JSONObject().put("id", pair.id).put("localTree", pair.localTree).put("localName", pair.localName).put("remotePath", pair.remotePath).put("direction", pair.direction)) }
+        prefs.edit { putString("sync_pairs", rows.toString()) }
+        mutable.update { it.copy(syncPairs = pairs) }
+        refreshSyncSchedule()
+    }
+
+    private fun refreshSyncSchedule() {
+        val context = getApplication<Application>()
+        SyncWorker.schedule(context, mutable.value.server, mutable.value.syncPairs, mutable.value.syncInterval, mutable.value.syncWifiOnly)
+    }
+
     private fun savePhotoFolders(folders: List<String>) {
         val clean = folders.map(String::trim).filter(String::isNotEmpty).distinct().sorted()
         prefs.edit {
@@ -90,6 +144,12 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
             if (clean.isEmpty()) remove("library") else putString("library", clean.first())
         }
         mutable.update { it.copy(photoFolders = clean) }
+    }
+
+    private fun saveFileFolders(folders: List<String>) {
+        val clean = folders.map(String::trim).filter(String::isNotEmpty).distinct().sorted()
+        prefs.edit { putStringSet("file_folders", clean.toSet()) }
+        mutable.update { it.copy(fileFolders = clean) }
     }
     var api = createApi()
         private set
@@ -103,9 +163,9 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 if (epoch == generation && mutable.value.signedIn) {
                     if (api.isUsingDeviceToken()) {
-                        tokenVault.clear()
+                        if (activeDeviceTokenReadOnly) readOnlyTokenVault.clear() else tokenVault.clear()
                         activeDeviceToken = null
-                        mutable.update { it.copy(hasDeviceToken = false) }
+                        mutable.update { it.copy(hasDeviceToken = tokenVault.hasToken(), hasReadOnlySyncToken = readOnlyTokenVault.hasToken()) }
                     }
                     lock("Your session expired. Sign in again.")
                 }
@@ -116,10 +176,12 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         .okHttpClient(api.client).diskCache(null).crossfade(false).build()
 
     private val tokenVault = DeviceTokenVault(application)
+    private val readOnlyTokenVault = DeviceTokenVault(application, readOnly = true)
     private val uploadsDirectory = File(application.filesDir, "shared_uploads")
 
     init {
         refreshThemes()
+        refreshSyncSchedule()
         viewModelScope.launch {
             UploadWorker.observe(getApplication()).collect { infos ->
                 val uploads = infos.map { info ->
@@ -136,7 +198,9 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 mutable.update { it.copy(uploads = uploads) }
             }
         }
-        tokenVault.read()?.let { signInWithDeviceToken(it, remember = false) }
+        val writeToken = tokenVault.read()
+        val savedToken = writeToken ?: readOnlyTokenVault.read()
+        savedToken?.let { signInWithDeviceToken(it, remember = false, readOnly = writeToken == null) }
     }
 
     fun configureServer(value: String): String? {
@@ -152,14 +216,22 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         imageLoader.shutdown()
         CredentialVault(getApplication()).clear()
         tokenVault.clear()
+        readOnlyTokenVault.clear()
         activeDeviceToken = null
+        activeDeviceTokenReadOnly = false
         androidx.work.WorkManager.getInstance(getApplication<Application>()).cancelAllWorkByTag(UploadWorker.TAG)
-        prefs.edit { putString("server", normalized); remove("library"); remove("photo_folders"); remove("theme"); remove("upload_directory") }
+        androidx.work.WorkManager.getInstance(getApplication<Application>()).cancelAllWorkByTag(SyncWorker.TAG)
+        prefs.edit { putString("server", normalized); remove("library"); remove("photo_folders"); remove("file_folders"); remove("sync_pairs"); remove("theme"); remove("upload_directory") }
         mutable.value = PhotoState(
             server = normalized,
             gridSize = prefs.getString("grid_size", "medium") ?: "medium",
             sortOrder = prefs.getString("sort_order", "newest") ?: "newest",
+            fileGridSize = prefs.getString("file_grid_size", "medium") ?: "medium",
+            fileSortOrder = prefs.getString("file_sort_order", "name") ?: "name",
+            fileLayout = prefs.getString("file_layout", "list") ?: "list",
             defaultTab = prefs.getString("default_tab", "photos") ?: "photos",
+            syncInterval = prefs.getString("sync_interval", "hourly") ?: "hourly",
+            syncWifiOnly = prefs.getBoolean("sync_wifi_only", true),
         )
         api = createApi()
         imageLoader = createImageLoader()
@@ -176,8 +248,10 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 current.login(password)
                 if (api !== current) return@launch
                 activeDeviceToken = null
+                activeDeviceTokenReadOnly = false
                 onSuccess?.invoke()
                 mutable.update { it.copy(signedIn = true, busy = false, choosing = it.photoFolders.isEmpty(), error = null) }
+                refreshSyncSchedule()
                 browse(null)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -189,7 +263,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signInWithDeviceToken(token: String, remember: Boolean = true) {
+    fun signInWithDeviceToken(token: String, remember: Boolean = true, readOnly: Boolean = false) {
         if (mutable.value.busy || token.isBlank()) return
         val current = api
         mutable.update { it.copy(busy = true, error = null) }
@@ -198,15 +272,18 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 current.loginWithDeviceToken(token.trim())
                 if (api !== current) return@launch
                 activeDeviceToken = token.trim()
-                if (remember) tokenVault.store(token.trim())
-                mutable.update { it.copy(signedIn = true, busy = false, choosing = it.photoFolders.isEmpty(), hasDeviceToken = tokenVault.hasToken(), error = null) }
+                activeDeviceTokenReadOnly = readOnly
+                if (remember) (if (readOnly) readOnlyTokenVault else tokenVault).store(token.trim())
+                mutable.update { it.copy(signedIn = true, busy = false, choosing = it.photoFolders.isEmpty(), hasDeviceToken = tokenVault.hasToken(), hasReadOnlySyncToken = readOnlyTokenVault.hasToken(), error = null) }
+                refreshSyncSchedule()
                 browse(null)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (api !== current) return@launch
-                if (e is ApiException && e.status == 401 && tokenVault.read() == token.trim()) {
-                    tokenVault.clear()
-                    mutable.update { it.copy(hasDeviceToken = false) }
+                val vault = if (readOnly) readOnlyTokenVault else tokenVault
+                if (e is ApiException && e.status == 401 && vault.read() == token.trim()) {
+                    vault.clear()
+                    mutable.update { it.copy(hasDeviceToken = tokenVault.hasToken(), hasReadOnlySyncToken = readOnlyTokenVault.hasToken()) }
                 }
                 mutable.update { it.copy(busy = false, error = if (e is ApiException && e.status == 401) "This device token was rejected or revoked." else message(e)) }
             }
@@ -218,9 +295,14 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         if (!mutable.value.signedIn || mutable.value.creatingDeviceToken) return
         if (current.isUsingDeviceToken()) {
             val active = activeDeviceToken ?: return
+            if (activeDeviceTokenReadOnly) {
+                mutable.update { it.copy(error = "This session uses a read-only token. Sign in with your Holodrive password to create a separate writable background token.") }
+                return
+            }
             try {
                 tokenVault.store(active)
                 mutable.update { it.copy(hasDeviceToken = true, notice = "Device token saved securely for background uploads.") }
+                refreshSyncSchedule()
             } catch (e: Exception) { mutable.update { it.copy(error = e.message ?: "Could not store the device token securely.") } }
             return
         }
@@ -231,7 +313,40 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 val secret = current.createDeviceToken("Holodrive Photos · ${model.take(38)}")
                 tokenVault.store(secret)
                 current.setDeviceToken(secret)
+                activeDeviceToken = secret
+                activeDeviceTokenReadOnly = false
                 mutable.update { it.copy(creatingDeviceToken = false, hasDeviceToken = true, notice = "Background uploads are enabled. You can revoke this device token from the Holodrive Devices page.") }
+                refreshSyncSchedule()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                mutable.update { it.copy(creatingDeviceToken = false, error = message(e)) }
+            }
+        }
+    }
+
+    fun enableReadOnlySync() {
+        val current = api
+        if (!mutable.value.signedIn || mutable.value.creatingDeviceToken) return
+        if (current.isUsingDeviceToken()) {
+            if (activeDeviceTokenReadOnly) {
+                val active = activeDeviceToken ?: return
+                try {
+                    readOnlyTokenVault.store(active)
+                    mutable.update { it.copy(hasReadOnlySyncToken = true, notice = "Read-only sync token saved securely on this device.") }
+                } catch (e: Exception) { mutable.update { it.copy(error = e.message ?: "Could not store the read-only token securely.") } }
+            } else {
+                mutable.update { it.copy(error = "This session uses a writable token. Sign in with your Holodrive password to create a separate read-only sync token.") }
+            }
+            return
+        }
+        mutable.update { it.copy(creatingDeviceToken = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val model = android.os.Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android device"
+                val secret = current.createDeviceToken("Holodrive read-only sync · ${model.take(30)}", readOnly = true)
+                readOnlyTokenVault.store(secret)
+                mutable.update { it.copy(creatingDeviceToken = false, hasReadOnlySyncToken = true, notice = "Read-only sync token saved securely. It cannot upload, change, or delete server files.") }
+                refreshSyncSchedule()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 mutable.update { it.copy(creatingDeviceToken = false, error = message(e)) }
@@ -242,8 +357,11 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     fun signOut() {
         CredentialVault(getApplication()).clear()
         tokenVault.clear()
+        readOnlyTokenVault.clear()
         activeDeviceToken = null
+        activeDeviceTokenReadOnly = false
         androidx.work.WorkManager.getInstance(getApplication<Application>()).cancelAllWorkByTag(UploadWorker.TAG)
+        androidx.work.WorkManager.getInstance(getApplication<Application>()).cancelAllWorkByTag(SyncWorker.TAG)
         val current = api
         lock(null)
         viewModelScope.launch {
@@ -316,6 +434,100 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         prefs.edit { putString("sort_order", value) }
         mutable.update { it.copy(sortOrder = value) }
     }
+    fun setFileGridSize(value: String) {
+        if (value !in setOf("compact", "medium", "large")) return
+        prefs.edit { putString("file_grid_size", value) }
+        mutable.update { it.copy(fileGridSize = value) }
+    }
+    fun setFileSortOrder(value: String) {
+        if (value !in setOf("name", "newest", "oldest", "type")) return
+        prefs.edit { putString("file_sort_order", value) }
+        mutable.update { it.copy(fileSortOrder = value) }
+    }
+    fun setFileLayout(value: String) {
+        if (value !in setOf("list", "grid")) return
+        prefs.edit { putString("file_layout", value) }
+        mutable.update { it.copy(fileLayout = value) }
+    }
+    fun addSyncPair(localTree: Uri, localName: String) {
+        val state = mutable.value
+        if (!state.signedIn || (!state.hasDeviceToken && !state.hasReadOnlySyncToken)) {
+            mutable.update { it.copy(error = "Enable background sync access in Settings before adding a sync pair.") }
+            return
+        }
+        prefs.edit { putString("pending_sync_tree", localTree.toString()); putString("pending_sync_name", localName) }
+        chooseFolder("sync")
+    }
+    fun reportError(message: String) { mutable.update { it.copy(error = message) } }
+
+    fun createShareLink(path: String, passphrase: String) {
+        if (api.isUsingDeviceToken()) {
+            mutable.update { it.copy(error = "Creating share links requires a password sign-in. Device tokens cannot manage links.") }
+            return
+        }
+        mutable.update { it.copy(creatingShareLink = true, shareLink = null, cyberVaultNotice = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val link = api.createShareLink(path, passphrase)
+                mutable.update { it.copy(creatingShareLink = false, shareLink = link) }
+            } catch (e: Exception) {
+                mutable.update { it.copy(creatingShareLink = false, error = e.message ?: "Could not create the share link.") }
+            }
+        }
+    }
+
+    fun clearShareLink() { mutable.update { it.copy(creatingShareLink = false, shareLink = null, savingCyberVault = false, cyberVaultNotice = null) } }
+    fun saveShareToCyberVault(label: String, link: String, passphrase: String) {
+        if (api.isUsingDeviceToken()) {
+            mutable.update { it.copy(cyberVaultNotice = "Sign in with your Holodrive password to save secrets to CyberVault.") }
+            return
+        }
+        val current = api
+        mutable.update { it.copy(savingCyberVault = true, cyberVaultNotice = null) }
+        viewModelScope.launch {
+            try {
+                val saved = current.saveShareToCyberVault(label, link, passphrase)
+                if (api === current) mutable.update { it.copy(savingCyberVault = false, cyberVaultNotice = "Saved ‘$saved’ to CyberVault.") }
+            } catch (e: Exception) {
+                if (api === current) mutable.update {
+                    it.copy(savingCyberVault = false, cyberVaultNotice = e.message ?: "CyberVault bridge is unavailable. Start `cybervault bridge` on the server.")
+                }
+            }
+        }
+    }
+    fun removeSyncPair(id: String) {
+        SyncWorker.cancel(getApplication(), id)
+        saveSyncPairs(mutable.value.syncPairs.filterNot { it.id == id })
+    }
+    fun setSyncDirection(id: String, direction: String) {
+        if (direction !in setOf("upload", "two-way", "download")) return
+        saveSyncPairs(mutable.value.syncPairs.map { if (it.id == id) it.copy(direction = direction) else it })
+    }
+    fun setSyncInterval(value: String) {
+        if (value !in setOf("15m", "hourly", "6h", "daily")) return
+        prefs.edit { putString("sync_interval", value) }
+        mutable.update { it.copy(syncInterval = value) }
+        refreshSyncSchedule()
+    }
+    fun setSyncWifiOnly(value: Boolean) {
+        prefs.edit { putBoolean("sync_wifi_only", value) }
+        mutable.update { it.copy(syncWifiOnly = value) }
+        refreshSyncSchedule()
+    }
+    fun syncNow(id: String) {
+        mutable.value.syncPairs.firstOrNull { it.id == id }?.let { pair ->
+            if (pair.direction != "download" && !tokenVault.hasToken()) {
+                mutable.update { it.copy(error = "This sync direction needs a writable device token. Sign in with your Holodrive password and enable background uploads.") }
+                return
+            }
+            if (pair.direction == "download" && !tokenVault.hasToken() && !readOnlyTokenVault.hasToken()) {
+                mutable.update { it.copy(error = "Enable a read-only sync token in Settings first.") }
+                return
+            }
+            SyncWorker.runNow(getApplication(), mutable.value.server, pair, mutable.value.syncWifiOnly)
+            mutable.update { it.copy(notice = "${pair.localName} sync queued.") }
+        }
+    }
     fun setDefaultTab(value: String) {
         if (value !in setOf("photos", "files")) return
         prefs.edit { putString("default_tab", value) }
@@ -351,7 +563,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         browseJob?.cancel()
         imageLoader.shutdown()
         filesJob?.cancel()
-        mutable.update { it.copy(signedIn = false, busy = false, saving = false, entries = emptyList(), fileEntries = emptyList(), drives = emptyList(), path = null, filePath = null, fileBusy = false, fileError = null, error = error, notice = null) }
+        mutable.update { it.copy(signedIn = false, busy = false, saving = false, entries = emptyList(), fileEntries = emptyList(), drives = emptyList(), path = null, filePath = null, fileBusy = false, fileError = null, shareLink = null, creatingShareLink = false, error = error, notice = null) }
         // Expiry already clears cookies in the interceptor. Explicit logout keeps
         // its cookie long enough to invalidate the server-side session.
         if (error != null) {
@@ -427,20 +639,53 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         else if (path in state.photoFolders || (parent != null && parent in state.photoFolders)) home()
         else browse(parent)
     }
-    fun chooseFolder() { mutable.update { it.copy(choosing = true) }; browse(null) }
+    fun chooseFolder(target: String = "photos") {
+        require(target in setOf("photos", "files", "sync"))
+        mutable.update { it.copy(choosing = true, folderPickTarget = target, path = null, error = null) }
+        browse(null)
+    }
     fun selectFolder() {
         val path = mutable.value.path ?: return
         if (mutable.value.busy || mutable.value.error != null) return
-        val alreadyAdded = path in mutable.value.photoFolders
-        if (!alreadyAdded) savePhotoFolders(mutable.value.photoFolders + path)
-        mutable.update { it.copy(choosing = false, notice = if (alreadyAdded) "Folder is already in your photo gallery." else "Folder added to your combined photo gallery.") }
+        val state = mutable.value
+        val target = state.folderPickTarget
+        if (target == "sync") {
+            val localTree = prefs.getString("pending_sync_tree", null)
+            val localName = prefs.getString("pending_sync_name", "Phone folder") ?: "Phone folder"
+            if (localTree == null) {
+                mutable.update { it.copy(choosing = false, notice = "Choose a phone folder first, then choose its Holodrive destination.") }
+                browse(null)
+                return
+            }
+            val direction = if (!tokenVault.hasToken() && readOnlyTokenVault.hasToken()) "download" else "upload"
+            val pair = SyncPair(UUID.randomUUID().toString(), localTree, localName, path, direction)
+            prefs.edit { remove("pending_sync_tree"); remove("pending_sync_name") }
+            saveSyncPairs(state.syncPairs + pair)
+            mutable.update { it.copy(choosing = false, notice = "Sync pair added. Review its direction and conflict behavior in Folder sync settings.") }
+            browse(null)
+            return
+        }
+        val alreadyAdded = if (target == "files") path in state.fileFolders else path in state.photoFolders
+        if (!alreadyAdded) {
+            if (target == "files") saveFileFolders(state.fileFolders + path)
+            else savePhotoFolders(state.photoFolders + path)
+        }
+        val destination = if (target == "files") "Files" else "Photos"
+        mutable.update { it.copy(choosing = false, notice = if (alreadyAdded) "Folder is already saved in $destination." else "Folder added to $destination.") }
         browse(null)
     }
-    fun cancelFolder() { mutable.update { it.copy(choosing = false) }; home() }
+    fun cancelFolder() {
+        if (mutable.value.folderPickTarget == "sync") prefs.edit { remove("pending_sync_tree"); remove("pending_sync_name") }
+        mutable.update { it.copy(choosing = false) }
+        home()
+    }
     fun removePhotoFolder(path: String) {
         savePhotoFolders(mutable.value.photoFolders - path)
         mutable.update { it.copy(choosing = false) }
         home()
+    }
+    fun removeFileFolder(path: String) {
+        saveFileFolders(mutable.value.fileFolders - path)
     }
     fun home() { browse(null) }
     fun chooseTheme(id: String?) {
@@ -455,6 +700,40 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                 if (api === current) mutable.update { it.copy(catalog = themes) }
             } catch (_: IOException) { /* Offline use retains the fallback palette. */ }
             catch (_: org.json.JSONException) { /* Older servers may not expose themes. */ }
+        }
+    }
+    fun refreshGhostPort() {
+        if (!mutable.value.signedIn || mutable.value.checkingGhostPort) return
+        val current = api
+        mutable.update { it.copy(checkingGhostPort = true, ghostPortError = null) }
+        viewModelScope.launch {
+            try {
+                val result = current.ghostPortStatus()
+                if (api === current) mutable.update { it.copy(ghostPortStatus = result, ghostPortError = null, checkingGhostPort = false) }
+            } catch (e: Exception) {
+                if (api === current) mutable.update {
+                    it.copy(
+                        ghostPortStatus = null,
+                        ghostPortError = if (e is ApiException && e.status == 404) "Update the HOLODRIVE server to enable GhostPort status." else "Could not read GhostPort status. Check the server integration and try again.",
+                        checkingGhostPort = false,
+                    )
+                }
+            }
+        }
+    }
+    fun refreshCyberVault() {
+        if (!mutable.value.signedIn || mutable.value.checkingCyberVault) return
+        val current = api
+        mutable.update { it.copy(checkingCyberVault = true, cyberVaultStatusError = null) }
+        viewModelScope.launch {
+            try {
+                val result = current.cyberVaultStatus()
+                if (api === current) mutable.update { it.copy(cyberVaultStatus = result, cyberVaultStatusError = null, checkingCyberVault = false) }
+            } catch (e: Exception) {
+                if (api === current) mutable.update {
+                    it.copy(cyberVaultStatus = null, cyberVaultStatusError = if (e is ApiException && e.status == 404) "Update the HOLODRIVE server to enable CyberVault." else "Could not read CyberVault bridge status.", checkingCyberVault = false)
+                }
+            }
         }
     }
     fun savePhoto(entry: PhotoEntry, uri: Uri) {
