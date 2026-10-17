@@ -332,11 +332,11 @@ screen.
 
 ## 7. Rules for working here
 
-- **Git and GitHub:** all Cybercore work is on the **cybercore-tech** GitHub
-  account.
+- **Git and GitHub:** all Cybercore work is under the **cybercoretech** GitHub
+  organization, using the `darkstardevx` account.
   - Before every commit, run `git config user.email`. It must be
-    `332800418+cybercore-tech@users.noreply.github.com` once the repo's remote
-    points at cybercore-tech; identities follow the remote via `includeIf`.
+    `19244308+darkstardevx@users.noreply.github.com` once the repo's remote
+    points at cybercoretech; identities follow the remote via `includeIf`.
     Never commit as a personal Gmail address. If the check fails, abort the
     whole script, not just the next command.
 - **PRs:** always branch → push → PR → **the user merges**.

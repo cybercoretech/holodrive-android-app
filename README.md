@@ -101,7 +101,7 @@ The scratch variant resolves only `blackbox.tail9311b5.ts.net` to emulator loopb
 
 ## 📦 Release preparation
 
-The Android source repository is `https://github.com/cybercoretech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercore-tech/holodrive`](https://github.com/cybercoretech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
+The Android source repository is `https://github.com/cybercoretech/holodrive-android-app`; the Holodrive server and web GUI are in [`cybercoretech/holodrive`](https://github.com/cybercoretech/holodrive). Follow branch → push → PR → user merge, without stacked PRs. The included GitHub Actions workflow builds, tests, lints, and produces a debug artifact.
 
 Before a release is tagged, hosted CI must build and test the release variant and the release signing secrets must be configured in the repository. The app source is licensed under [Apache-2.0](LICENSE); bundled JetBrains Mono Nerd font files remain under their separate [OFL](docs/JetBrainsMono-OFL.txt).
 
