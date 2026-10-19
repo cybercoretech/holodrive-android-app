@@ -16,10 +16,12 @@ class SyncWorkerTest {
         assertEquals(SyncAction.NONE, chooseSyncAction("upload", null, null, 20, 10))
     }
 
-    @Test fun twoWayKeepsTheNewerVersionAndPhoneCopyWinsTies() {
+    @Test fun twoWayKeepsTheNewerVersionAndReportsAmbiguousSizeConflicts() {
         assertEquals(SyncAction.UPLOAD, chooseSyncAction("two-way", 24, 20_000, 20, 10))
         assertEquals(SyncAction.DOWNLOAD, chooseSyncAction("two-way", 20, 10_000, 24, 20))
-        assertEquals(SyncAction.UPLOAD, chooseSyncAction("two-way", 24, 10_000, 20, 10))
+        assertEquals(SyncAction.CONFLICT, chooseSyncAction("two-way", 24, 10_000, 20, 10))
+        assertEquals(SyncAction.UPLOAD, chooseSyncAction("upload", 24, 10_000, 20, 10))
+        assertEquals(SyncAction.DOWNLOAD, chooseSyncAction("download", 24, 10_000, 20, 10))
     }
 
     @Test fun matchingFilesAreLeftAlone() {

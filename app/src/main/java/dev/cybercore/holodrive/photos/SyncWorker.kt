@@ -18,9 +18,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-internal enum class SyncAction { NONE, UPLOAD, DOWNLOAD }
+internal enum class SyncAction { NONE, UPLOAD, DOWNLOAD, CONFLICT }
 
 /** Missing files are copied in the allowed direction; absence never deletes the other copy. */
 internal fun chooseSyncAction(direction: String, localSize: Long?, localModified: Long?, remoteSize: Long?, remoteModified: Long?): SyncAction {
@@ -37,7 +38,7 @@ internal fun chooseSyncAction(direction: String, localSize: Long?, localModified
         "two-way" -> when {
             localNewer -> SyncAction.UPLOAD
             remoteNewer -> SyncAction.DOWNLOAD
-            sizeDiffers -> SyncAction.UPLOAD
+            sizeDiffers -> SyncAction.CONFLICT
             else -> SyncAction.NONE
         }
         else -> SyncAction.NONE
@@ -67,6 +68,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             walkRemote(api, remoteRoot, remoteRoot, remoteFiles)
             val toUpload = mutableListOf<Pair<File, String>>()
             val toDownload = mutableListOf<Pair<String, PhotoEntry>>()
+            val conflicts = mutableListOf<String>()
             val names = (localFiles.keys + remoteFiles.keys).toSortedSet()
             for (name in names) {
                 val local = localFiles[name]
@@ -74,6 +76,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 when (chooseSyncAction(direction, local?.length(), local?.lastModified(), remote?.size, remote?.modified)) {
                     SyncAction.UPLOAD -> local?.let { stage(it, name)?.let(toUpload::add) }
                     SyncAction.DOWNLOAD -> remote?.let { toDownload += name to it }
+                    SyncAction.CONFLICT -> conflicts += name
                     SyncAction.NONE -> Unit
                 }
             }
@@ -85,14 +88,46 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 val temp = File(applicationContext.cacheDir, "holodrive-sync-${id}-$name")
                 temp.parentFile?.mkdirs()
                 temp.outputStream().buffered().use { api.download(entry.path, it) }
-                if (existing != null && !existing.delete()) throw IOException("Could not replace the local copy of $name.")
-                val created = parent.createFile(entry.mime.ifBlank { "application/octet-stream" }, name)
-                    ?: throw IOException("Android could not create $name in the selected folder.")
-                applicationContext.contentResolver.openOutputStream(created.uri, "wt")?.buffered()?.use { out -> temp.inputStream().buffered().use { it.copyTo(out) } }
-                    ?: throw IOException("Android could not write $name to the selected folder.")
-                temp.delete()
+                if (existing?.isDirectory == true) throw IOException("Could not replace the folder named $name with a file.")
+                val stagedName = ".holodrive-pending-${id}-${UUID.randomUUID().toString().take(8)}"
+                val staged = parent.createFile(entry.mime.ifBlank { "application/octet-stream" }, stagedName)
+                    ?: throw IOException("Android could not stage the downloaded copy of $name.")
+                try {
+                    applicationContext.contentResolver.openOutputStream(staged.uri, "wt")?.buffered()?.use { out ->
+                        temp.inputStream().buffered().use { it.copyTo(out) }
+                    } ?: throw IOException("Android could not write the staged copy of $name.")
+                    if (existing != null) {
+                        val backupName = ".holodrive-backup-${id}-${UUID.randomUUID().toString().take(8)}"
+                        if (!existing.renameTo(backupName)) throw IOException("Could not protect the existing local copy of $name.")
+                        if (!staged.renameTo(name)) {
+                            existing.renameTo(name)
+                            throw IOException("Could not install the downloaded copy of $name; the old copy was kept.")
+                        }
+                        existing.delete()
+                    } else if (!staged.renameTo(name)) {
+                        throw IOException("Could not install the downloaded copy of $name.")
+                    }
+                } finally {
+                    staged.delete()
+                    temp.delete()
+                }
             }
-            Result.success(Data.Builder().putInt("uploaded", toUpload.size).putInt("downloaded", toDownload.size).build())
+            val completedDownloads = toDownload.size
+            val summary = buildList {
+                if (toUpload.isNotEmpty()) add("${toUpload.size} upload(s) queued")
+                if (completedDownloads > 0) add("$completedDownloads downloaded")
+                if (conflicts.isNotEmpty()) add("${conflicts.size} conflict(s) need review")
+            }.joinToString(" · ")
+            if (summary.isNotEmpty()) {
+                try { api.recordActivity("sync", remoteRoot, summary) } catch (_: Exception) { }
+            }
+            Result.success(Data.Builder()
+                .putInt("uploaded", toUpload.size)
+                .putInt("downloaded", toDownload.size)
+                .putString(KEY_PAIR, inputData.getString(KEY_PAIR))
+                .putStringArray(KEY_CONFLICTS, conflicts.take(MAX_REPORTED_CONFLICTS).toTypedArray())
+                .putInt(KEY_CONFLICTS_TOTAL, conflicts.size)
+                .build())
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Result.retry()
@@ -138,17 +173,24 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     companion object {
         const val TAG = "holodrive-folder-sync"
+        const val TAG_PAIR = "$TAG-pair:"
         const val KEY_SERVER = "sync_server"
         const val KEY_TREE = "sync_tree"
         const val KEY_REMOTE = "sync_remote"
         const val KEY_DIRECTION = "sync_direction"
+        const val KEY_PAIR = "sync_pair"
+        const val KEY_CONFLICTS = "sync_conflicts"
+        const val KEY_CONFLICTS_TOTAL = "sync_conflicts_total"
+        private const val MAX_REPORTED_CONFLICTS = 100
         fun workName(id: String) = "$TAG-$id"
         private fun periodicName(id: String) = "${workName(id)}-periodic"
         private fun data(server: String, pair: SyncPair) = Data.Builder()
             .putString(KEY_SERVER, server).putString(KEY_TREE, pair.localTree).putString(KEY_REMOTE, pair.remotePath)
-            .putString(KEY_DIRECTION, pair.direction).build()
+            .putString(KEY_DIRECTION, pair.direction).putString(KEY_PAIR, pair.id).build()
         private fun constraints(wifiOnly: Boolean) = Constraints.Builder()
             .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED).build()
+
+        fun observe(context: Context) = WorkManager.getInstance(context).getWorkInfosByTagFlow(TAG)
 
         fun schedule(context: Context, server: String, pairs: List<SyncPair>, interval: String, wifiOnly: Boolean) {
             val manager = WorkManager.getInstance(context)
@@ -156,7 +198,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             pairs.forEach { pair ->
                 val request = PeriodicWorkRequestBuilder<SyncWorker>(minutes, TimeUnit.MINUTES)
                     .setInputData(data(server, pair)).setConstraints(constraints(wifiOnly))
-                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).addTag(TAG).build()
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).addTag(TAG).addTag(TAG_PAIR + pair.id).build()
                 manager.enqueueUniquePeriodicWork(periodicName(pair.id), ExistingPeriodicWorkPolicy.UPDATE, request)
             }
         }
@@ -169,7 +211,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         fun runNow(context: Context, server: String, pair: SyncPair, wifiOnly: Boolean) {
             val request = OneTimeWorkRequestBuilder<SyncWorker>().setInputData(data(server, pair))
                 .setConstraints(constraints(wifiOnly)).setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-                .addTag(TAG).build()
+                .addTag(TAG).addTag(TAG_PAIR + pair.id).build()
             WorkManager.getInstance(context).enqueueUniqueWork(workName(pair.id), ExistingWorkPolicy.REPLACE, request)
         }
     }

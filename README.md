@@ -23,11 +23,13 @@ Android 11 or newer is required. To update, install a newer signed release over 
 1. Open **Configure your server**. Enter an HTTPS Holodrive origin, or a full Tailscale URL such as `http://blackbox.tail9311b5.ts.net:8768`. Include the port your server actually uses. HTTP IP addresses, LAN hostnames, embedded credentials, and path prefixes are rejected.
 2. Connect Tailscale if using a tailnet server. Sign in with the Holodrive password, or create a token on the server's **Devices** page and choose **Device token**. You can also enable background uploads from Settings after password sign-in; the app creates a dedicated device token for this phone.
 3. **Photos** asks you to choose photo folders the first time; folders added to **Settings → Manage photo folders** appear together in one gallery. Remove folders there at any time. **Files** browses every configured drive; save frequently used server folders from **Settings → Manage file folders** for quick access at the Files root.
-4. Open a subfolder as an album. Photos in the current folder are shown newest-modified first. Search filters filenames in that folder; this is not recursive indexing or EXIF capture-date sorting.
+4. Open a subfolder as an album. Photos are scanned recursively within the selected folder and sorted by EXIF capture date when a JPEG provides it; other images fall back to modified time. Filenames can be searched in the current view.
 5. Use **Photos** for the selected photo library, or **Files** to browse all configured drives and download any file. In Photos, tap an image, swipe between photos, pinch or double-tap to zoom. **Save original** streams the original to a location selected through Android's document picker.
 6. **Open Holodrive** opens the full server GUI in your browser at the current folder. Browser authentication is separate; passwords and session tokens are never passed in the URL.
+   The top-bar **Recent activity** view shows the same folder-change feed as the web app while folders are being watched.
 7. Share one or more files from any Android app to **Holodrive Photos**. Choose the destination folder and add them to the upload queue. Uploads run in the background, show progress notifications, resume interrupted chunks, and retry when the network returns.
-8. In Settings, pair an Android folder with a Holodrive folder and choose **Phone → server**, **Two-way**, or **Server → phone** for each pair. Set automatic sync to every 15 minutes, hourly, every 6 hours, or daily; choose Wi-Fi-only; or run a pair manually. Background sync requires an encrypted device token and the Android folder permission. Two-way sync favors the newer modified time (phone wins ties); it never propagates deletions. Choose photo and file layouts and grid sizes, sort each view, select the default Photos or Files tab, and save the upload destination. Select a theme or follow the server.
+8. In Settings, pair an Android folder with a Holodrive folder and choose **Phone → server**, **Two-way**, or **Server → phone** for each pair. Set automatic sync to every 15 minutes, hourly, every 6 hours, or daily; choose Wi-Fi-only; or run a pair manually. Background sync requires an encrypted device token and the Android folder permission. Two-way sync copies the newer modified version; if timestamps are effectively tied but file sizes differ, it skips both and reports the conflict for review. It never propagates deletions. The open Files or Photos folder refreshes while the app is in the foreground. Choose photo and file layouts and grid sizes, sort each view, select the default Photos or Files tab, and save the upload destination. Select a theme or follow the server.
+9. From a folder in the web GUI, choose **📱 Send to phone**, scan its QR code or open the copied `holodrive://` link on a phone with Holodrive Photos installed. The app opens that folder in Files after sign-in; the link contains no server credentials or session token.
 
 The gallery still displays folders and raster photos; non-photo files, hidden names, and links escaping the shared root are excluded. Uploads accept files shared by other Android apps. Sync copies files and folders but does not propagate deletions; background sync cadence is managed by Android and may be delayed by battery/network policy. Video playback and server administration are not included.
 
@@ -50,6 +52,8 @@ After creating a protected share, choose **Save link + passphrase to CyberVault*
 - No analytics, ads, telemetry, contacts, camera, or broad storage permissions. Explicitly saved photos are normal files at the destination chosen by the user, outside the app's session protection.
 
 See [PRIVACY.md](docs/PRIVACY.md) and [VALIDATION.md](docs/VALIDATION.md).
+The folder handoff and two-way sync conflict rules are documented in
+[mobile-handoff-and-sync.md](docs/mobile-handoff-and-sync.md).
 
 ## 🧰 Build
 

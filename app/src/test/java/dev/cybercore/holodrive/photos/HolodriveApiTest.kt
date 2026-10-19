@@ -165,4 +165,17 @@ class HolodriveApiTest {
         assertFalse(entry("drawing.svg", "image/svg+xml")!!.image)
         assertFalse(entry("notes.txt", "text/plain")!!.image)
     }
+
+    @Test fun photoScanPreservesServerPathsAndExifCaptureDates() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"results":[{"name":"trip.jpg","path":"pictures/2024/trip.jpg","kind":"file","mime":"image/jpeg","size":12,"mtime":2,"capture_date":"2024:05:06 07:08:09"}],"truncated":false}"""))
+            val api = HolodriveApi(server.url("/"), Dns.SYSTEM)
+            val scan = api.photos("pictures")
+            assertEquals("pictures", server.takeRequest().requestUrl!!.queryParameter("path"))
+            assertEquals("pictures/2024/trip.jpg", scan.entries.single().path)
+            assertEquals("2024:05:06 07:08:09", scan.entries.single().captureDate)
+            assertFalse(scan.truncated)
+            api.close()
+        }
+    }
 }

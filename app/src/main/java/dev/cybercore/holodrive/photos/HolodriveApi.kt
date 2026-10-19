@@ -1,6 +1,9 @@
 package dev.cybercore.holodrive.photos
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -67,7 +70,7 @@ class SessionCookies : CookieJar {
 
 class ApiException(val status: Int, message: String) : IOException(message)
 data class Drive(val id: String, val name: String, val icon: String, val online: Boolean)
-data class PhotoEntry(val name: String, val path: String, val folder: Boolean, val image: Boolean, val mime: String, val size: Long, val modified: Long) {
+data class PhotoEntry(val name: String, val path: String, val folder: Boolean, val image: Boolean, val mime: String, val size: Long, val modified: Long, val captureDate: String? = null) {
     companion object {
         fun fromJson(folder: String, obj: JSONObject): PhotoEntry? {
             val name = obj.getString("name")
@@ -77,10 +80,21 @@ data class PhotoEntry(val name: String, val path: String, val folder: Boolean, v
             val mime = obj.optString("mime")
             // Retain all ordinary files for Files; SVG remains excluded from Photos.
             val image = !isFolder && mime.startsWith("image/") && mime != "image/svg+xml"
-            return PhotoEntry(name, "$folder/$name", isFolder, image, mime, obj.optLong("size"), obj.optLong("mtime"))
+            return PhotoEntry(
+                name,
+                obj.optString("path").takeIf(String::isNotBlank) ?: "$folder/$name",
+                isFolder,
+                image,
+                mime,
+                obj.optLong("size"),
+                obj.optLong("mtime"),
+                obj.optString("capture_date").takeIf(String::isNotBlank),
+            )
         }
     }
 }
+data class PhotoScan(val entries: List<PhotoEntry>, val truncated: Boolean)
+data class ActivityItem(val id: Long, val at: Long, val kind: String, val path: String, val detail: String)
 data class ServerTheme(val id: String, val name: String, val palette: Map<String, String>)
 data class ThemeCatalog(val active: String, val themes: List<ServerTheme>)
 data class GhostPortLinkStatus(val id: String, val mode: String, val activeStreams: Long, val bytesRelayed: Long)
@@ -180,6 +194,41 @@ class HolodriveApi(
     suspend fun list(path: String): List<PhotoEntry> {
         val array = JSONObject(request("list", path)).getJSONArray("entries")
         return (0 until array.length()).mapNotNull { PhotoEntry.fromJson(path, array.getJSONObject(it)) }
+    }
+    suspend fun photos(path: String): PhotoScan {
+        val result = JSONObject(request("photos", path))
+        val array = result.getJSONArray("results")
+        return PhotoScan(
+            (0 until array.length()).mapNotNull { PhotoEntry.fromJson(path, array.getJSONObject(it)) },
+            result.optBoolean("truncated"),
+        )
+    }
+    suspend fun activity(): List<ActivityItem> {
+        val array = JSONArray(request("activity"))
+        return (0 until array.length()).map { array.getJSONObject(it) }.map { item ->
+            ActivityItem(item.optLong("id"), item.optLong("at"), item.optString("kind"), item.optString("path"), item.optString("detail"))
+        }
+    }
+    suspend fun recordActivity(kind: String, path: String, detail: String) {
+        request("activity", body = JSONObject()
+            .put("kind", kind)
+            .put("path", path)
+            .put("detail", detail.take(240)))
+    }
+    suspend fun watchFolder(path: String, onChange: () -> Unit) = withContext(Dispatchers.IO) {
+        val call = client.newCall(Request.Builder().url(url("events", path)).header("Accept", "text/event-stream").build())
+        currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+        call.execute().use { response ->
+            if (!response.isSuccessful) throw failure(response.code)
+            val source = response.body?.source() ?: throw IOException("The folder event stream was empty.")
+            var eventName = ""
+            while (currentCoroutineContext().isActive) {
+                val line = source.readUtf8Line() ?: break
+                if (line.startsWith("event:")) eventName = line.substringAfter(':').trim()
+                else if (line.isEmpty()) eventName = ""
+                else if (eventName == "folder-change" && line.startsWith("data:")) onChange()
+            }
+        }
     }
     suspend fun themes(): ThemeCatalog {
         val obj = JSONObject(request("cybergrid/themes"))

@@ -38,7 +38,11 @@ data class PhotoState(
     val folderPickTarget: String = "photos",
     val drives: List<Drive> = emptyList(),
     val entries: List<PhotoEntry> = emptyList(),
+    val photoScanTruncated: Boolean = false,
+    val activityFeed: List<ActivityItem> = emptyList(),
+    val activityError: String? = null,
     val filePath: String? = null,
+    val pendingOpenPath: String? = null,
     val fileEntries: List<PhotoEntry> = emptyList(),
     val fileBusy: Boolean = false,
     val fileError: String? = null,
@@ -57,6 +61,7 @@ data class PhotoState(
     val fileLayout: String = "list",
     val defaultTab: String = "photos",
     val syncPairs: List<SyncPair> = emptyList(),
+    val syncConflicts: Map<String, SyncConflictReport> = emptyMap(),
     val syncInterval: String = "hourly",
     val syncWifiOnly: Boolean = true,
     val blockedUntil: Long = 0,
@@ -76,6 +81,7 @@ data class PhotoState(
 
 data class ShareFile(val file: File, val name: String, val size: Long)
 data class SyncPair(val id: String, val localTree: String, val localName: String, val remotePath: String, val direction: String = "upload")
+data class SyncConflictReport(val paths: List<String>, val total: Int)
 
 class PhotoModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("preferences", 0)
@@ -196,6 +202,18 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 mutable.update { it.copy(uploads = uploads) }
+            }
+        }
+        viewModelScope.launch {
+            SyncWorker.observe(getApplication()).collect { infos ->
+                val reports = infos.mapNotNull { info ->
+                    val pair = info.outputData.getString(SyncWorker.KEY_PAIR)
+                        ?: info.tags.firstOrNull { it.startsWith(SyncWorker.TAG_PAIR) }?.removePrefix(SyncWorker.TAG_PAIR)
+                    val paths = info.outputData.getStringArray(SyncWorker.KEY_CONFLICTS)?.toList().orEmpty()
+                    val total = info.outputData.getInt(SyncWorker.KEY_CONFLICTS_TOTAL, 0)
+                    if (pair != null && total > 0) pair to SyncConflictReport(paths, total) else null
+                }.toMap()
+                mutable.update { it.copy(syncConflicts = reports) }
             }
         }
         val writeToken = tokenVault.read()
@@ -574,24 +592,35 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun browse(path: String?) {
+    fun browse(path: String?, preserve: Boolean = false) {
         if (!mutable.value.signedIn) return
         browseJob?.cancel()
         val current = api
         val aggregateLibraries = path == null && !mutable.value.choosing && mutable.value.photoFolders.isNotEmpty()
-        mutable.update { it.copy(path = path, entries = emptyList(), busy = true, error = null) }
+        mutable.update { it.copy(path = path, entries = if (preserve) it.entries else emptyList(), busy = !preserve, error = null) }
         browseJob = viewModelScope.launch {
             try {
                 val drives = if (path == null || mutable.value.drives.isEmpty()) current.roots() else mutable.value.drives
                 var unavailable: List<String> = emptyList()
+                var truncated = false
                 val entries = when {
-                    path != null -> current.list(path)
+                    path != null && mutable.value.choosing -> current.list(path)
+                    path != null -> {
+                        val listing = current.list(path)
+                        val scan = current.photos(path)
+                        truncated = scan.truncated
+                        listing.filter { it.folder } + scan.entries
+                    }
                     aggregateLibraries -> {
                         val failed = mutableListOf<String>()
                         val folderContents = mutableListOf<List<PhotoEntry>>()
                         mutable.value.photoFolders.forEach { folder ->
-                            try { folderContents += current.list(folder) }
-                            catch (e: Exception) {
+                            try {
+                                val listing = current.list(folder)
+                                val scan = current.photos(folder)
+                                truncated = truncated || scan.truncated
+                                folderContents += listing.filter { it.folder } + scan.entries
+                            } catch (e: Exception) {
                                 if (e is CancellationException) throw e
                                 failed += folder
                             }
@@ -605,7 +634,7 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
                     "Could not load ${it.size} photo folder(s): ${it.joinToString { path -> path.substringAfterLast('/') }}. Check the folder or remove it in Settings."
                 }
                 if (api === current && mutable.value.signedIn) mutable.update {
-                    it.copy(drives = drives, entries = entries, busy = false, error = folderError)
+                    it.copy(drives = drives, entries = entries, photoScanTruncated = truncated, busy = false, error = folderError)
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -613,11 +642,11 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun browseFiles(path: String?) {
+    fun browseFiles(path: String?, preserve: Boolean = false) {
         if (!mutable.value.signedIn) return
         filesJob?.cancel()
         val current = api
-        mutable.update { it.copy(filePath = path, fileEntries = emptyList(), fileBusy = true, fileError = null) }
+        mutable.update { it.copy(filePath = path, fileEntries = if (preserve) it.fileEntries else emptyList(), fileBusy = !preserve, fileError = null) }
         filesJob = viewModelScope.launch {
             try {
                 val drives = if (path == null || mutable.value.drives.isEmpty()) current.roots() else mutable.value.drives
@@ -631,6 +660,16 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+    fun openRemotePath(path: String) {
+        val clean = path.trim().trim('/')
+        val parts = clean.split('/')
+        if (clean.isBlank() || clean.length > 2048 || parts.any { it.isBlank() || it == "." || it == ".." || it.startsWith('.') || '\\' in it }) {
+            mutable.update { it.copy(error = "This Holodrive folder link is invalid.") }
+            return
+        }
+        mutable.update { it.copy(pendingOpenPath = clean, notice = "Folder link received. Sign in to open it.") }
+    }
+    fun clearPendingOpenPath() { mutable.update { it.copy(pendingOpenPath = null) } }
     fun up() {
         val state = mutable.value
         val path = state.path ?: return
@@ -691,6 +730,19 @@ class PhotoModel(application: Application) : AndroidViewModel(application) {
     fun chooseTheme(id: String?) {
         prefs.edit { putString("theme", id) }
         mutable.update { it.copy(themeChoice = id) }
+    }
+    fun refreshActivity() {
+        if (!mutable.value.signedIn) return
+        val current = api
+        viewModelScope.launch {
+            try {
+                val items = current.activity()
+                if (api === current) mutable.update { it.copy(activityFeed = items, activityError = null) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (api === current) mutable.update { it.copy(activityError = message(e)) }
+            }
+        }
     }
     fun refreshThemes() {
         val current = api

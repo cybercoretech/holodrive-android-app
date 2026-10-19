@@ -59,6 +59,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun consumeShareIntent(model: PhotoModel, intent: android.content.Intent) {
+        if (intent.action == android.content.Intent.ACTION_VIEW &&
+            intent.data?.scheme == "holodrive" && intent.data?.host == "open") {
+            intent.data?.getQueryParameter("path")?.let(model::openRemotePath)
+            return
+        }
         if (intent.action != android.content.Intent.ACTION_SEND && intent.action != android.content.Intent.ACTION_SEND_MULTIPLE) return
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {

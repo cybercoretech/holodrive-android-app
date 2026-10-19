@@ -50,6 +50,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import java.util.Locale
@@ -71,6 +77,7 @@ fun PhotoApp(
     var returnToSyncAfterFolderPick by rememberSaveable { mutableStateOf(false) }
     var themePicker by rememberSaveable { mutableStateOf(false) }
     var uploadsOpen by rememberSaveable { mutableStateOf(false) }
+    var activityOpen by rememberSaveable { mutableStateOf(false) }
     var confirmTokenAccess by rememberSaveable { mutableStateOf(false) }
     var viewing by rememberSaveable(state.path, state.filePath, state.signedIn) { mutableStateOf<String?>(null) }
     var viewerFromFiles by rememberSaveable { mutableStateOf(false) }
@@ -133,6 +140,39 @@ fun PhotoApp(
     LaunchedEffect(state.signedIn, section) {
         if (state.signedIn && section == "files") model.browseFiles(state.filePath)
     }
+    LaunchedEffect(state.pendingOpenPath, state.signedIn) {
+        val path = state.pendingOpenPath
+        if (path != null && state.signedIn) {
+            section = "files"
+            model.clearPendingOpenPath()
+            model.browseFiles(path)
+        }
+    }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, state.signedIn, section, state.path, state.filePath, state.photoFolders, state.choosing) {
+        if (state.signedIn) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val watchedPaths = when {
+                state.choosing -> emptyList()
+                section == "files" -> listOfNotNull(state.filePath)
+                state.path != null -> listOf(state.path)
+                else -> state.photoFolders
+            }
+            coroutineScope {
+                watchedPaths.forEach { path -> launch {
+                    while (true) {
+                        try { model.api.watchFolder(path) { model.refreshActivity() } }
+                        catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { delay(15_000) }
+                    }
+                } }
+                while (true) {
+                    delay(15_000)
+                    if (section == "files") model.browseFiles(state.filePath, preserve = true)
+                    else if (!state.choosing) model.browse(state.path, preserve = true)
+                }
+            }
+        }
+    }
     // Refresh the server palette when the app returns from the browser.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { model.refreshThemes() }
     BackHandler(state.signedIn && section == "photos" && viewing == null && (state.choosing || state.path != null)) {
@@ -153,6 +193,7 @@ fun PhotoApp(
                     title = { Brand(compact = true) },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background.copy(alpha = .92f)),
                     actions = {
+                        ActionIcon(Icons.Outlined.History, "Recent activity") { activityOpen = true; model.refreshActivity() }
                         ActionIcon(Icons.Outlined.CloudUpload, "Upload queue") { uploadsOpen = true }
                         ActionIcon(Icons.Outlined.OpenInBrowser, "Open Holodrive web GUI", ::openWeb)
                         ActionIcon(Icons.Outlined.Palette, "Choose theme") { themePicker = true }
@@ -232,12 +273,34 @@ fun PhotoApp(
         interval = model::setSyncInterval,
         wifiOnly = model::setSyncWifiOnly,
         runNow = model::syncNow,
+        reviewConflicts = { path -> section = "files"; syncSettingsOpen = false; model.browseFiles(path) },
         close = { syncSettingsOpen = false },
     )
     if (themePicker) ThemePicker(model, state) { themePicker = false }
     if (state.sharing) AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("Preparing uploads") }, text = { Text(state.shareProgress ?: "Copying shared files…") })
     if (state.sharedFiles.isNotEmpty() && state.signedIn) ShareUploadDialog(model, state, onEnableUploads = requestTokenAccess, close = model::dismissShare)
     if (uploadsOpen) UploadQueueSheet(model, state) { uploadsOpen = false }
+    if (activityOpen) AlertDialog(
+        onDismissRequest = { activityOpen = false },
+        title = { Text("Recent activity") },
+        text = {
+            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.activityError?.let { StatusCard(Icons.Outlined.CloudOff, "Activity unavailable", it, "Retry", model::refreshActivity) }
+                if (state.activityFeed.isEmpty() && state.activityError == null) Text("No recent folder changes. Activity appears when a browser or phone is watching a folder.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                state.activityFeed.take(50).forEach { item ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                        Text("📡")
+                        Column {
+                            Text(item.path, style = MaterialTheme.typography.labelLarge)
+                            Text("${item.detail} · ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.at * 1000))}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { activityOpen = false }) { Text("DONE") } },
+        dismissButton = { TextButton(onClick = model::refreshActivity) { Text("REFRESH") } },
+    )
     if (confirmTokenAccess) AlertDialog(
         onDismissRequest = { confirmTokenAccess = false },
         title = { Text("Allow background uploads?") },
@@ -375,6 +438,9 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
             }
         }
         if (state.busy) item(span = { GridItemSpan(maxLineSpan) }) { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (state.photoScanTruncated) item(span = { GridItemSpan(maxLineSpan) }) {
+            Text("This library scan reached its safety limit; some older photos may be missing.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+        }
         state.error?.let { error -> item(span = { GridItemSpan(maxLineSpan) }) {
             StatusCard(Icons.Outlined.CloudOff, "Connection interrupted", error, "Try again") { model.browse(state.path) }
         } }
@@ -415,8 +481,9 @@ private fun Gallery(model: PhotoModel, state: PhotoState, photos: List<PhotoEntr
                         loading = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Image, null, tint = MaterialTheme.colorScheme.outline) } },
                         error = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Preview\nunavailable", style = MaterialTheme.typography.labelSmall) } },
                     )
-                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .75f)))).padding(8.dp)) {
+                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .78f)))).padding(8.dp)) {
                         Text(photo.name, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        photo.captureDate?.let { captured -> Text(captured.take(10).replace(':', '-'), color = Color.White.copy(alpha = .78f), fontSize = 9.sp, maxLines = 1) }
                     }
                 }
             }
@@ -781,6 +848,7 @@ private fun SyncSettingsDialog(
     interval: (String) -> Unit,
     wifiOnly: (Boolean) -> Unit,
     runNow: (String) -> Unit,
+    reviewConflicts: (String) -> Unit,
     close: () -> Unit,
 ) {
     AlertDialog(
@@ -796,6 +864,15 @@ private fun SyncSettingsDialog(
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(pair.localName, style = MaterialTheme.typography.titleSmall)
                             Text("↔ ${pair.remotePath}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            state.syncConflicts[pair.id]?.let { report ->
+                                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(10.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                        Text("${report.total} sync conflict${if (report.total == 1) "" else "s"} skipped safely", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onErrorContainer)
+                                        Text("Both copies had close timestamps but different sizes, so Holodrive kept both unchanged. ${report.paths.take(4).joinToString()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                                        TextButton(onClick = { reviewConflicts(pair.remotePath) }) { Text("REVIEW SERVER FOLDER") }
+                                    }
+                                }
+                            }
                             SettingChoiceRow(
                                 "Sync direction",
                                 pair.direction,
@@ -818,7 +895,7 @@ private fun SyncSettingsDialog(
                     }
                     Switch(checked = state.syncWifiOnly, onCheckedChange = wifiOnly)
                 }
-                Text("A read-only token can only download; phone → server and two-way sync need a writable token. Two-way conflicts use the newer modified time; ties keep the phone copy. Sync never propagates deletions. Downloaded files replace same-name local files only after the download completes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("A read-only token can only download; phone → server and two-way sync need a writable token. Two-way sync copies the newer modified version. If timestamps are effectively tied but file sizes differ, it skips both copies and lists the conflict for review. Sync never propagates deletions. Downloads finish before replacing a same-name local file.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {

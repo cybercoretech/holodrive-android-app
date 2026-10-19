@@ -31,6 +31,13 @@ class PhotoLibraryTest {
         assertEquals(listOf(middle, older, newer), sortLibraryPhotos(entries, "name"))
     }
 
+    @Test
+    fun captureDateTakesPrecedenceOverModifiedTimeWhenAvailable() {
+        val oldCapture = photo("old-camera-date.jpg", "a/old.jpg", 9_000).copy(captureDate = "2020:01:01 12:00:00")
+        val newCapture = photo("new-camera-date.jpg", "a/new.jpg", 1_000).copy(captureDate = "2025:01:01 12:00:00")
+        assertEquals(listOf(newCapture, oldCapture), sortLibraryPhotos(listOf(oldCapture, newCapture), "newest"))
+    }
+
     private fun photo(name: String, path: String, modified: Long) =
         PhotoEntry(name, path, folder = false, image = true, mime = "image/jpeg", size = 1, modified = modified)
 }
