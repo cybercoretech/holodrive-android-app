@@ -6,17 +6,21 @@ A native Android client for [Holodrive](https://github.com/cybercoretech/holodri
 
 ## 📲 Install Holodrive Photos
 
-**[GitHub Releases](https://github.com/cybercoretech/holodrive-android-app/releases)** · [Install with Obtainium](https://github.com/cybercoretech/holodrive-android-app#automatic-updates-with-obtainium) · [Android app guide](https://cybercoretech.github.io/holodrive-android-app/)
+**[Cybercore F-Droid repo](https://cybercoretech.github.io/fdroid/#app=dev.cybercore.holodrive.photos)** · **[GitHub Releases](https://github.com/cybercoretech/holodrive-android-app/releases/latest)** · [Obtainium](#-automatic-updates-with-obtainium)
 
-The first signed APK release is being prepared. After `v0.1.0` is published, the stable latest-release download URLs below will be active.
+- 🤖 **F-Droid (automatic updates):** add the Cybercore repository at <https://cybercoretech.github.io/fdroid/> and install *Holodrive Photos*. It's the same signed APK as the GitHub release.
+- 💻 **From a computer** (phone on USB, USB debugging on; it verifies the SHA-256 and the signing certificate, and never guesses between several devices):
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/cybercoretech/holodrive-android-app/main/install.sh | sh
+  ```
+- 📦 **Manual:** download and verify on any computer, then copy to the phone:
+  ```sh
+  curl -fL -O https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
+  curl -fL -O https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
+  sha256sum --check holodrive-photos.apk.sha256
+  ```
 
-```sh
-curl -fL -o holodrive-photos.apk https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk
-curl -fL -o holodrive-photos.apk.sha256 https://github.com/cybercoretech/holodrive-android-app/releases/latest/download/holodrive-photos.apk.sha256
-sha256sum --check holodrive-photos.apk.sha256
-```
-
-Android 11 or newer is required. To update, install a newer signed release over the existing app; Android verifies that updates use the same signing key. For automatic update checks, install [Obtainium](https://github.com/ImranR98/Obtainium), choose **Add app**, and enter `https://github.com/cybercoretech/holodrive-android-app`.
+🪪 Release signing certificate (SHA-256): `02e0bbab51e85a39db95577bb682f52380001a50fcf64013af5b32efa6178e6e`. Android 11 or newer is required. Updates install over the existing app only when they're signed with this same key.
 
 ## 🚀 Using the app
 
