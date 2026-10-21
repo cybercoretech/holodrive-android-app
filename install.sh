@@ -11,6 +11,10 @@
 #   https://cybercoretech.github.io/fdroid/
 set -eu
 
+# Everything runs inside main, which is only called on the last line, so a
+# truncated download or `curl | sh` can never execute a partial script.
+main() {
+
 APP="Holodrive Photos"
 REPO="cybercoretech/holodrive-android-app"
 ASSET="holodrive-photos.apk"
@@ -67,9 +71,9 @@ else
 fi
 
 if [ -z "${ANDROID_SERIAL:-}" ]; then
-  devices=$(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
+  devices=$(adb devices </dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')
   count=$(printf '%s\n' "$devices" | grep -c . || true)
-  unauthorized=$(adb devices | awk 'NR > 1 && $2 == "unauthorized"' | grep -c . || true)
+  unauthorized=$(adb devices </dev/null | awk 'NR > 1 && $2 == "unauthorized"' | grep -c . || true)
   if [ "$count" -eq 0 ]; then
     [ "$unauthorized" -gt 0 ] && die "the phone hasn't authorized this computer yet: unlock it and accept the USB debugging prompt"
     die "no device found: connect the phone over USB and turn on USB debugging"
@@ -79,9 +83,12 @@ if [ -z "${ANDROID_SERIAL:-}" ]; then
   export ANDROID_SERIAL
 fi
 
-state=$(adb -s "$ANDROID_SERIAL" get-state 2>/dev/null || true)
+state=$(adb -s "$ANDROID_SERIAL" get-state </dev/null 2>/dev/null || true)
 [ "$state" = device ] || die "device $ANDROID_SERIAL is not connected or not authorized (see 'adb devices')"
-model=$(adb shell getprop ro.product.model 2>/dev/null | tr -d '\r')
+model=$(adb shell getprop ro.product.model </dev/null 2>/dev/null | tr -d '\r')
 say "Installing on ${model:-device} ($ANDROID_SERIAL)…"
-adb install -r "$tmp/$ASSET" >/dev/null || die "adb install failed (an older build signed with a different key must be uninstalled first)"
+adb install -r "$tmp/$ASSET" </dev/null >/dev/null || die "adb install failed (an older build signed with a different key must be uninstalled first)"
 say "Done. Open $APP on your phone."
+}
+
+main "$@"
